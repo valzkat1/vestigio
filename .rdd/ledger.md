@@ -361,3 +361,58 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
     techo cómodo sin eso.
   - `runMCP`, `main()` y `detectProject()` con git remote real siguen sin cubrir.
   - Los fixes son de comportamiento de CLI, sin migración ni datos tocados. Sin commitear.
+
+## RECEIPT · parser de argumentos compartido — cierra el bug destructivo de `rm`
+- **when**: 2026-08-07T00:00Z
+- **intent**: la revisión del commit propio `3bb1172` encontró dos bugs con la misma causa raíz:
+  el CLI no tenía parser, tenía helpers que buscaban lo que esperaban e ignoraban el resto.
+  El usuario aprobó atacar la causa en vez de parchar caso por caso.
+- **el bug grave, medido antes del fix con binario y datos reales**:
+  `vestigio rm 1 2 --yes` → `1 memory deleted`, exit **0**, y la memoria **#2 seguía viva**.
+  Se pidió borrar dos, se reportó éxito, quedó una. En el único comando que destruye datos.
+  `parseImportArgs` ya rechazaba un segundo posicional, con el comentario "silently keeping one
+  of the two is how the original bug did its damage". El razonamiento estaba escrito hace dos
+  commits y no se había aplicado acá.
+- **el segundo**: `list --porject=otro` / `--verbose` / `--al` → exit 0, ignorados, listando el
+  proyecto detectado como si fuera la respuesta pedida. Mi fix previo de `--limit`/`--kind` fue
+  PARCIAL: cerré dos síntomas y dejé la puerta abierta en el mismo archivo.
+- **changed**:
+  - cmd/vestigio/admin.go — `argSpec` + `parseArgs` + `cmdArgs`. Cada comando declara su
+    superficie completa; lo que queda afuera es error. Helpers viejos (`flagValue`, `hasFlag`,
+    `firstPositional`, `parseID`) **eliminados**, no deprecados: dejarlos invita a reusar el
+    patrón roto.
+  - cmd/vestigio/main.go — `runMCP` también, con su propio spec. Ahí el costo era peor: proyecto
+    equivocado = recall vacío, que `detectProject` documenta como "se lee como pérdida de datos".
+  - cmd/vestigio/admin_test.go — 13 casos de rechazo en tabla + regresiones end-to-end de
+    `rm 1 2 --yes` (verifica que **ninguna** de las dos se borró), `rm 1 --yess`, y flags
+    desconocidos en `list`. Más dos defectos MÍOS corregidos en la misma pasada: `capture()` no
+    restauraba `os.Stdout` por `defer` (un panic dejaba stdout en un pipe muerto y todos los
+    tests siguientes perdían salida), y assertions `code != 0` que aceptaban un exit-1 por panic
+    como si fuera el rechazo correcto — ahora exigen exit 2 exacto.
+  - docs/cli.md — sección nueva "Every command validates its whole argument list" con la tabla
+    de qué pasa con cada forma mal tipeada, y el caso de `rm` contado explícitamente.
+- **ran** (binario compilado, no solo `go test`):
+  - `rm 1 2 --yes` → exit **2** + "this command takes one at a time, and 2 were given";
+    `list` después → **2 memories**, ninguna borrada
+  - `rm 1 --yess` → 2 · `list --porject=otro` → 2 · `list --kind decision` → 2 ("takes its value
+    inline") · `mcp --porject=otro` → 2
+  - lo válido sin cambios: `list --kind=reference --limit=5` → 0 · `rm 1 --yes` → 0, borra una
+  - `go test ./... -cover -count=1` → suite completa verde, cmd/vestigio **63.2% → 64.8%**
+  - `go vet ./...` 0 · `gofmt -l .` vacío
+- **cost**: opus · ~16 tool calls
+- **gaps**:
+  - **Cambio de contrato del CLI, aprobado explícitamente por el usuario.** Formas que antes
+    "funcionaban" (ignoradas) ahora fallan con exit 2. No hay migración porque no hay datos
+    involucrados, pero un script existente que pasaba un flag de más ahora se rompe — ruidosamente,
+    que es el punto.
+  - `runEdit` con `--titel=X` ahora falla con "unknown flag" en vez de abrir el editor. Era el
+    caso que la revisión anterior dejó pendiente por ser una decisión de UX; queda resuelto como
+    efecto del parser compartido, no como decisión aparte.
+  - `parseImportArgs` sigue siendo un parser SEPARADO. Podría reescribirse sobre `parseArgs`, pero
+    tiene semántica propia (`--map` acumula pares) y unificarlo sin necesidad es refactor por el
+    refactor. Queda anotado, no hecho.
+  - `editInEditor`, `main()` y `detectProject()` con git remote real siguen sin cubrir. 64.8% es
+    el techo cómodo sin fakes de binarios externos.
+  - El commit anterior (`3bb1172`, "increase coverage") sigue con un mensaje que esconde tres bug
+    fixes y un cambio de comportamiento. No se reescribió historia; queda dicho acá.
+  - Sin commitear.

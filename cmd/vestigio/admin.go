@@ -48,33 +48,114 @@ func truncate(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
-func flagValue(args []string, name string) (string, bool) {
-	for _, a := range args {
-		if v, ok := strings.CutPrefix(a, "--"+name+"="); ok {
-			return v, true
-		}
-	}
-	return "", false
+// argSpec declares the entire surface a command accepts.
+//
+// The helpers this replaced scanned the arguments for what they expected and
+// ignored everything else, which meant `list --porject=other` listed the
+// detected project and read like an answer, and `rm 1 2 --yes` deleted one
+// memory while reporting success. Both are the failure this project is built
+// against: a wrong answer delivered quietly.
+//
+// parseImportArgs already worked this way for `import`. This is the same rule,
+// applied to the commands that browse and destroy.
+type argSpec struct {
+	usage   string
+	value   []string // flags carrying a value inline, after "="
+	boolean []string // flags that are simply present or absent
+	maxPos  int      // positional arguments the command can actually use
 }
 
-func hasFlag(args []string, name string) bool {
-	for _, a := range args {
-		if a == "--"+name {
-			return true
-		}
-	}
-	return false
+type cmdArgs struct {
+	values map[string]string
+	flags  map[string]bool
+	pos    []string
 }
 
-// firstPositional returns the first argument that is not a flag.
-func firstPositional(args []string) string {
+func (a *cmdArgs) value(name string) (string, bool) { v, ok := a.values[name]; return v, ok }
+func (a *cmdArgs) has(name string) bool             { return a.flags[name] }
+
+// id reads the single positional every id-taking command needs.
+func (a *cmdArgs) id() (int64, error) {
+	if len(a.pos) == 0 {
+		return 0, fmt.Errorf("no id given")
+	}
+	id, err := strconv.ParseInt(a.pos[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid id %q", a.pos[0])
+	}
+	return id, nil
+}
+
+func parseArgs(args []string, spec argSpec) (*cmdArgs, error) {
+	takesValue, isBool := map[string]bool{}, map[string]bool{}
+	for _, f := range spec.value {
+		takesValue[f] = true
+	}
+	for _, f := range spec.boolean {
+		isBool[f] = true
+	}
+
+	out := &cmdArgs{values: map[string]string{}, flags: map[string]bool{}}
 	for _, a := range args {
 		if !strings.HasPrefix(a, "-") {
-			return a
+			out.pos = append(out.pos, a)
+			continue
+		}
+		name, val, inline := strings.Cut(strings.TrimPrefix(a, "--"), "=")
+		switch {
+		case !strings.HasPrefix(a, "--"):
+			return nil, fmt.Errorf("unknown flag %q — flags are long form\n%s", a, spec.usage)
+		case inline && takesValue[name]:
+			out.values[name] = val
+		case !inline && isBool[name]:
+			out.flags[name] = true
+		case !inline && takesValue[name]:
+			return nil, fmt.Errorf("--%s takes its value inline: --%s=VALUE\n%s", name, name, spec.usage)
+		case inline && isBool[name]:
+			return nil, fmt.Errorf("--%s takes no value\n%s", name, spec.usage)
+		default:
+			return nil, fmt.Errorf("unknown flag %q\n%s", "--"+name, spec.usage)
 		}
 	}
-	return ""
+
+	if len(out.pos) > spec.maxPos {
+		if spec.maxPos == 0 {
+			return nil, fmt.Errorf("unexpected argument %q — this command takes none\n%s", out.pos[0], spec.usage)
+		}
+		// Silently keeping one of two is how the import bug did its damage, and
+		// here the discarded one would have been a memory the operator asked to
+		// delete.
+		return nil, fmt.Errorf("unexpected argument %q — this command takes one at a time, and %d were given\n%s",
+			out.pos[spec.maxPos], len(out.pos), spec.usage)
+	}
+	return out, nil
 }
+
+// usageErr reports a malformed command line. Exit 2 is the usage code the rest
+// of the CLI already uses, and it is distinct from 1 so a script can tell "you
+// typed it wrong" from "it ran and failed".
+func usageErr(err error) int {
+	fmt.Fprintln(os.Stderr, "vestigio:", err)
+	return 2
+}
+
+var (
+	projectsSpec = argSpec{usage: "usage: vestigio projects"}
+	listSpec     = argSpec{
+		usage:   "usage: vestigio list [--project=NAME] [--all] [--kind=KIND] [--limit=N]",
+		value:   []string{"project", "kind", "limit"},
+		boolean: []string{"all"},
+	}
+	showSpec = argSpec{usage: "usage: vestigio show <id>", maxPos: 1}
+	editSpec = argSpec{
+		usage:   "usage: vestigio edit <id> [--title=T] [--kind=K] [--body-file=F] [--fix]",
+		value:   []string{"title", "kind", "body-file"},
+		boolean: []string{"fix"},
+		maxPos:  1,
+	}
+	rmSpec     = argSpec{usage: "usage: vestigio rm <id> [--yes]", boolean: []string{"yes"}, maxPos: 1}
+	verifySpec = argSpec{usage: "usage: vestigio verify"}
+)
 
 // validKinds lists the closed set for error messages, sorted so the text does
 // not change between runs over a map.
@@ -103,19 +184,10 @@ func shortHash(h string) string {
 	return h[:12]
 }
 
-func parseID(args []string) (int64, error) {
-	raw := firstPositional(args)
-	if raw == "" {
-		return 0, fmt.Errorf("no id given")
-	}
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid id %q", raw)
-	}
-	return id, nil
-}
-
 func runProjects(args []string) int {
+	if _, err := parseArgs(args, projectsSpec); err != nil {
+		return usageErr(err)
+	}
 	st, err := openStore()
 	if err != nil {
 		return fail(err)
@@ -140,21 +212,21 @@ func runProjects(args []string) int {
 }
 
 func runList(args []string) int {
-	// Flags are validated before the store is opened: a value the command cannot
-	// honour must stop it, never be quietly swapped for a default. Silently
-	// falling back is how `--limit=abc` returned thirty rows and looked like an
-	// answer — the same failure the import parser was fixed for.
-	kind, _ := flagValue(args, "kind")
+	// Everything is validated before the store is opened: a value the command
+	// cannot honour must stop it, never be quietly swapped for a default.
+	a, err := parseArgs(args, listSpec)
+	if err != nil {
+		return usageErr(err)
+	}
+	kind, _ := a.value("kind")
 	if kind != "" && !store.Kinds[kind] {
-		fmt.Fprintf(os.Stderr, "vestigio: invalid kind %q — valid kinds are %s\n", kind, validKinds())
-		return 2
+		return usageErr(fmt.Errorf("invalid kind %q — valid kinds are %s", kind, validKinds()))
 	}
 	limit := 30
-	if v, ok := flagValue(args, "limit"); ok {
+	if v, ok := a.value("limit"); ok {
 		n, err := strconv.Atoi(strings.TrimSpace(v))
 		if err != nil || n <= 0 {
-			fmt.Fprintf(os.Stderr, "vestigio: --limit needs a positive whole number, got %q\n", v)
-			return 2
+			return usageErr(fmt.Errorf("--limit needs a positive whole number, got %q", v))
 		}
 		limit = n
 	}
@@ -166,10 +238,10 @@ func runList(args []string) int {
 	defer st.Close()
 
 	project := detectProject()
-	if v, ok := flagValue(args, "project"); ok {
+	if v, ok := a.value("project"); ok {
 		project = v
 	}
-	if hasFlag(args, "all") {
+	if a.has("all") {
 		project = ""
 	}
 
@@ -198,10 +270,13 @@ func runList(args []string) int {
 }
 
 func runShow(args []string) int {
-	id, err := parseID(args)
+	a, err := parseArgs(args, showSpec)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "usage: vestigio show <id>")
-		return 2
+		return usageErr(err)
+	}
+	id, err := a.id()
+	if err != nil {
+		return usageErr(err)
 	}
 	st, err := openStore()
 	if err != nil {
@@ -233,10 +308,13 @@ func runShow(args []string) int {
 // what "edit manually" usually means. --fix skips the editor and just rewrites
 // the row, repairing a drifted hash without changing a character of content.
 func runEdit(args []string) int {
-	id, err := parseID(args)
+	a, err := parseArgs(args, editSpec)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "usage: vestigio edit <id> [--title=T] [--kind=K] [--body-file=F] [--fix]")
-		return 2
+		return usageErr(err)
+	}
+	id, err := a.id()
+	if err != nil {
+		return usageErr(err)
 	}
 	st, err := openStore()
 	if err != nil {
@@ -252,17 +330,17 @@ func runEdit(args []string) int {
 		return fail(fmt.Errorf("no memory with id %d", id))
 	}
 
-	title, _ := flagValue(args, "title")
-	kind, _ := flagValue(args, "kind")
+	title, _ := a.value("title")
+	kind, _ := a.value("kind")
 	body := ""
 
-	if f, ok := flagValue(args, "body-file"); ok {
+	if f, ok := a.value("body-file"); ok {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			return fail(err)
 		}
 		body = string(b)
-	} else if title == "" && kind == "" && !hasFlag(args, "fix") {
+	} else if title == "" && kind == "" && !a.has("fix") {
 		body, err = editInEditor(cur.Body)
 		if err != nil {
 			return fail(err)
@@ -324,10 +402,13 @@ func editInEditor(current string) (string, error) {
 }
 
 func runRm(args []string) int {
-	id, err := parseID(args)
+	a, err := parseArgs(args, rmSpec)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "usage: vestigio rm <id> [--yes]")
-		return 2
+		return usageErr(err)
+	}
+	id, err := a.id()
+	if err != nil {
+		return usageErr(err)
 	}
 	st, err := openStore()
 	if err != nil {
@@ -343,7 +424,7 @@ func runRm(args []string) int {
 		return fail(fmt.Errorf("no memory with id %d", id))
 	}
 
-	if !hasFlag(args, "yes") {
+	if !a.has("yes") {
 		fmt.Printf("#%d [%s] %s\n  project %s, %d tokens\n",
 			d.ID, d.Kind, d.Title, d.Project, d.Tokens)
 		fmt.Print("delete? [y/N] ")
@@ -364,6 +445,9 @@ func runRm(args []string) int {
 
 // runVerify reports rows whose hash or token count no longer matches the content.
 func runVerify(args []string) int {
+	if _, err := parseArgs(args, verifySpec); err != nil {
+		return usageErr(err)
+	}
 	st, err := openStore()
 	if err != nil {
 		return fail(err)

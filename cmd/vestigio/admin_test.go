@@ -55,9 +55,18 @@ func capture(t *testing.T, fn func() int) (string, int) {
 		done <- b.String()
 	}()
 
-	code := fn()
-	w.Close()
-	os.Stdout = prev
+	// Restored through a defer, not after the call: a panic inside fn would
+	// otherwise leave os.Stdout pointing at a pipe nobody reads, and every later
+	// test in the package would lose its output — one failure turning into a
+	// cascade that hides its own cause.
+	var code int
+	func() {
+		defer func() {
+			os.Stdout = prev
+			w.Close()
+		}()
+		code = fn()
+	}()
 	return <-done, code
 }
 
@@ -94,30 +103,80 @@ func TestTruncateCutsOnRunes(t *testing.T) {
 	}
 }
 
-func TestParseIDAndPositionals(t *testing.T) {
-	if id, err := parseID([]string{"--fix", "42"}); err != nil || id != 42 {
-		t.Errorf("parseID(--fix 42) = %d, %v; want 42, nil — flag order must not matter", id, err)
+func TestParseArgsAcceptsTheDeclaredSurface(t *testing.T) {
+	a, err := parseArgs([]string{"--kind=decision", "--all", "--limit=5"}, listSpec)
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
 	}
-	for _, args := range [][]string{{}, {"--fix"}, {"abc"}, {"1.5"}} {
-		if _, err := parseID(args); err == nil {
-			t.Errorf("parseID(%q) = nil error, want an error", args)
-		}
+	if v, ok := a.value("kind"); !ok || v != "decision" {
+		t.Errorf("kind = %q, %v", v, ok)
+	}
+	if !a.has("all") {
+		t.Error("--all not recorded")
+	}
+	if _, ok := a.value("project"); ok {
+		t.Error("project reported present when it was never passed")
+	}
+
+	// An empty inline value is still a value the caller typed, not an absence.
+	a, err = parseArgs([]string{"--limit="}, listSpec)
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if v, ok := a.value("limit"); !ok || v != "" {
+		t.Errorf("--limit= gave %q, %v; want an empty value marked present", v, ok)
+	}
+
+	// Flag order must not decide which argument is the id.
+	a, err = parseArgs([]string{"--fix", "42"}, editSpec)
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if id, err := a.id(); err != nil || id != 42 {
+		t.Errorf("id = %d, %v; want 42", id, err)
 	}
 }
 
-func TestFlagValueAndHasFlag(t *testing.T) {
-	args := []string{"--kind=decision", "--all", "--limit="}
-	if v, ok := flagValue(args, "kind"); !ok || v != "decision" {
-		t.Errorf("flagValue(kind) = %q, %v", v, ok)
+// The rule the old helpers broke: an argument the command does not understand
+// stops it, rather than being scanned past.
+func TestParseArgsRejectsWhatItDoesNotUnderstand(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		spec argSpec
+	}{
+		{"misspelled value flag", []string{"--porject=other"}, listSpec},
+		{"unknown flag", []string{"--verbose"}, listSpec},
+		{"misspelled bool flag", []string{"--al"}, listSpec},
+		{"short flag", []string{"-n"}, listSpec},
+		{"value flag without its value", []string{"--kind", "decision"}, listSpec},
+		{"bool flag given a value", []string{"--all=yes"}, listSpec},
+		{"positional where none is taken", []string{"extra"}, listSpec},
+		{"second id on rm", []string{"1", "2", "--yes"}, rmSpec},
+		{"second id on show", []string{"1", "2"}, showSpec},
+		{"second id on edit", []string{"1", "2", "--fix"}, editSpec},
+		{"misspelled confirmation", []string{"1", "--yess"}, rmSpec},
+		{"argument to verify", []string{"1"}, verifySpec},
+		{"argument to projects", []string{"--all"}, projectsSpec},
 	}
-	if v, ok := flagValue(args, "limit"); !ok || v != "" {
-		t.Errorf("flagValue(limit) = %q, %v; an empty inline value is still present", v, ok)
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := parseArgs(tt.args, tt.spec); err == nil {
+				t.Errorf("parseArgs(%q) = nil error; a misunderstood argument must stop the command", tt.args)
+			}
+		})
 	}
-	if _, ok := flagValue(args, "project"); ok {
-		t.Error("flagValue(project) reported present")
-	}
-	if !hasFlag(args, "all") || hasFlag(args, "yes") {
-		t.Error("hasFlag disagrees with the args")
+}
+
+func TestCmdArgsIDErrors(t *testing.T) {
+	for _, args := range [][]string{{}, {"--fix"}, {"abc"}, {"1.5"}} {
+		a, err := parseArgs(args, editSpec)
+		if err != nil {
+			continue // rejected earlier, which is also correct
+		}
+		if _, err := a.id(); err == nil {
+			t.Errorf("id() on %q = nil error, want an error", args)
+		}
 	}
 }
 
@@ -169,8 +228,8 @@ func TestRunListRejectsUnparseableLimit(t *testing.T) {
 	for _, bad := range []string{"--limit=abc", "--limit=", "--limit=-1", "--limit=0"} {
 		t.Run(bad, func(t *testing.T) {
 			_, code := capture(t, func() int { return runList([]string{bad}) })
-			if code == 0 {
-				t.Errorf("runList(%q) returned 0 — an unusable limit was silently replaced by the default", bad)
+			if code != 2 {
+				t.Errorf("runList(%q) = %d, want 2 — a usage error, not a default quietly standing in", bad, code)
 			}
 		})
 	}
@@ -183,8 +242,8 @@ func TestRunListRejectsUnknownKind(t *testing.T) {
 	seedCLI(t, st)
 
 	out, code := capture(t, func() int { return runList([]string{"--kind=decisionn"}) })
-	if code == 0 {
-		t.Errorf("runList(--kind=decisionn) returned 0 with output:\n%s\nwant a non-zero code naming the valid kinds", out)
+	if code != 2 {
+		t.Errorf("runList(--kind=decisionn) = %d with output:\n%s\nwant 2, naming the valid kinds", code, out)
 	}
 }
 
@@ -217,6 +276,61 @@ func TestRunRmRequiresConfirmationOrYes(t *testing.T) {
 	}
 	if _, code := capture(t, func() int { return runRm(nil) }); code != 2 {
 		t.Errorf("runRm() = %d, want 2", code)
+	}
+}
+
+// The worst bug this file found: `rm 1 2 --yes` printed "1 memory deleted" and
+// exited 0 while #2 survived. The operator asked for two, was told it worked,
+// and lost track of which one is still there.
+func TestRunRmRefusesASecondIDInsteadOfDroppingIt(t *testing.T) {
+	st := cli(t)
+	seedCLI(t, st)
+
+	_, code := capture(t, func() int { return runRm([]string{"1", "2", "--yes"}) })
+	if code != 2 {
+		t.Errorf("runRm(1 2 --yes) = %d, want 2", code)
+	}
+	for _, id := range []int64{1, 2} {
+		d, err := st.Get(id)
+		if err != nil {
+			t.Fatalf("get %d: %v", id, err)
+		}
+		if d == nil {
+			t.Errorf("memory #%d was deleted by a command that should have been refused", id)
+		}
+	}
+}
+
+// A mistyped --yes must not be read as confirmation.
+func TestRunRmRefusesAMistypedConfirmation(t *testing.T) {
+	st := cli(t)
+	seedCLI(t, st)
+
+	_, code := capture(t, func() int { return runRm([]string{"1", "--yess"}) })
+	if code != 2 {
+		t.Errorf("runRm(1 --yess) = %d, want 2", code)
+	}
+	if d, _ := st.Get(1); d == nil {
+		t.Error("memory #1 was deleted on a flag the command does not define")
+	}
+}
+
+// `list --porject=other` used to print the detected project's memories and read
+// like an answer to a question nobody asked.
+func TestRunListRejectsUnknownFlags(t *testing.T) {
+	st := cli(t)
+	seedCLI(t, st)
+
+	for _, bad := range []string{"--porject=other", "--verbose", "--al", "--kind"} {
+		t.Run(bad, func(t *testing.T) {
+			out, code := capture(t, func() int { return runList([]string{bad}) })
+			if code != 2 {
+				t.Errorf("runList(%q) = %d, want 2. Output was:\n%s", bad, code, out)
+			}
+			if strings.Contains(out, "Elegido Go") {
+				t.Errorf("runList(%q) printed results for a command line it did not understand", bad)
+			}
+		})
 	}
 }
 
