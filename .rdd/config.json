@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "verify": {
+    "test": "go test ./...",
+    "lint": "go vet ./...",
+    "build": "go build ./...",
+    "typecheck": null
+  },
+  "enforcement": {
+    "hard": ["changed", "ran", "gaps"],
+    "soft": ["intent", "cost"]
+  },
+  "ledger": ".rdd/ledger.md"
+}

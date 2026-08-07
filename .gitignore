@@ -1,0 +1,12 @@
+# build output
+/vestigio
+/vestigio.exe
+/dist/
+
+# local databases
+*.db
+*.db-shm
+*.db-wal
+
+# RDD per-session scratch (the ledger itself IS committed)
+.rdd/state.json

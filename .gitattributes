@@ -1,0 +1,13 @@
+# Normalize to LF in the repository. The binary must build identically on
+# linux, darwin and windows, and mixed endings turn into noise diffs the first
+# time someone clones on another platform.
+* text=auto eol=lf
+
+*.go     text eol=lf
+*.mod    text eol=lf
+*.sum    text eol=lf
+*.md     text eol=lf
+*.json   text eol=lf
+
+*.exe    binary
+*.db     binary
