@@ -47,13 +47,17 @@ func main() {
 	}
 }
 
+var mcpSpec = argSpec{usage: "usage: vestigio mcp [--project=NAME]", value: []string{"project"}}
+
 func runMCP(args []string) int {
-	project := ""
-	for _, a := range args {
-		if v, ok := strings.CutPrefix(a, "--project="); ok {
-			project = v
-		}
+	// A mistyped --porject used to be ignored, and the server would then serve a
+	// different project than the one asked for. That is the failure detectProject
+	// warns about: recall comes back empty and reads like data loss.
+	a, err := parseArgs(args, mcpSpec)
+	if err != nil {
+		return usageErr(err)
 	}
+	project, _ := a.value("project")
 	if project == "" {
 		project = detectProject()
 	}

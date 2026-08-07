@@ -32,10 +32,28 @@ Running `vestigio` with no arguments prints usage and exits `2`.
 |---|---|
 | `0` | Success |
 | `1` | Runtime failure — or, for `verify`, drift was found |
-| `2` | Usage error: missing command, unknown command, missing or invalid id |
+| `2` | Usage error: missing or unknown command, unknown flag, missing or invalid id, extra argument |
 
 `verify` returning `1` on drift is deliberate: it makes the command usable as a check in a
 pre-commit hook or CI job without parsing its output.
+
+### Every command validates its whole argument list
+
+An argument a command does not understand stops it. It is never scanned past, and never quietly
+swapped for a default:
+
+| You typed | What happens |
+|---|---|
+| `list --porject=other` | exit `2`, `unknown flag "--porject"` — it does **not** list the detected project |
+| `list --kind decision` | exit `2` — flag values are inline, after `=` |
+| `list --all=yes` | exit `2` — `--all` takes no value |
+| `rm 1 2 --yes` | exit `2`, **nothing is deleted** — delete one at a time |
+| `rm 1 --yess` | exit `2` — a mistyped confirmation is not confirmation |
+| `mcp --porject=other` | exit `2` — serving the wrong project makes recall look like data loss |
+
+`rm 1 2 --yes` used to print `1 memory deleted` and exit `0` while the second memory survived. The
+operator asked for two, was told it worked, and was left with one. That is the failure this whole
+project is built against, so validation is shared by every command rather than written per command.
 
 ## Environment
 
