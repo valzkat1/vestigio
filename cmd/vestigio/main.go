@@ -24,6 +24,18 @@ func main() {
 		os.Exit(runMCP(args[1:]))
 	case "import":
 		os.Exit(runImport(args[1:]))
+	case "projects":
+		os.Exit(runProjects(args[1:]))
+	case "list", "ls":
+		os.Exit(runList(args[1:]))
+	case "show", "cat":
+		os.Exit(runShow(args[1:]))
+	case "edit":
+		os.Exit(runEdit(args[1:]))
+	case "rm", "delete":
+		os.Exit(runRm(args[1:]))
+	case "verify":
+		os.Exit(runVerify(args[1:]))
 	case "version", "--version", "-v":
 		fmt.Println("vestigio", mcp.Version)
 	case "help", "--help", "-h":
@@ -156,9 +168,38 @@ Usage:
   vestigio mcp [--project=NAME]   Start the MCP server (stdio)
   vestigio version                Print version
 
+Inspect and edit:
+  vestigio projects               Inventory: memories and tokens per project
+  vestigio list [flags]           List memories, newest first
+       --project=NAME               default: detected project
+       --all                        every project
+       --kind=KIND                  decision|bugfix|pattern|constraint|reference
+       --limit=N                    default 30
+  vestigio show <id>              Print one memory in full
+  vestigio edit <id> [flags]      Rewrite a memory, recomputing hash and tokens
+       (no flags)                   open $VISUAL/$EDITOR on the body
+       --title=TEXT --kind=KIND
+       --body-file=FILE
+       --fix                        recompute derived columns, keep content
+  vestigio rm <id> [--yes]        Delete a memory
+  vestigio verify                 Report rows whose hash or tokens drifted
+
+  Import an Engram export:
+  vestigio import <export.json> [--dry-run] [--map old=new] [--skip type]
+
 Tools exposed over MCP: recall, remember, forget.
 Operational commands stay out of MCP on purpose — every tool exposed to an
-agent is context paid for in every session.
+agent is context paid for in every session. They are still CLI commands: a
+human browsing or repairing the store costs an agent nothing.
+
+Never edit the database with a raw SQL prompt or a GUI browser. The FTS index
+is kept in sync by triggers, but "hash" and "tokens" are computed on write and
+no trigger touches them: a stale hash silently stops remember from
+deduplicating, so it inserts near-copies instead of updating. "vestigio edit"
+recomputes both; "vestigio verify" finds rows where that already happened.
+
+Ids are global, not project-scoped — running from the wrong directory will
+never hide a row that exists.
 
 Environment:
   VESTIGIO_DB        Database path (default ~/.vestigio/vestigio.db)
