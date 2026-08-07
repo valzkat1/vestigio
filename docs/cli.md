@@ -173,8 +173,12 @@ Lists memories, newest first.
 |---|---|---|
 | `--project=NAME` | detected project | Scope to one project. |
 | `--all` | off | Every project. Overrides `--project`. |
-| `--kind=KIND` | all kinds | One of `decision`, `bugfix`, `pattern`, `constraint`, `reference`. |
-| `--limit=N` | `30` | Maximum rows. A value that is not an integer is ignored and the default stands. |
+| `--kind=KIND` | all kinds | One of `decision`, `bugfix`, `pattern`, `constraint`, `reference`. Anything else exits `2` and prints the valid set. |
+| `--limit=N` | `30` | Maximum rows. Must be a positive whole number; anything else exits `2`. |
+
+Both flags are validated before the database is opened, and a value the command cannot honour stops
+it rather than being swapped for a default. `--limit=abc` used to return thirty rows and look like an
+answer — the same quiet-wrong-answer failure the [import parser](#import) was fixed for.
 
 ```
 ID   KIND        TOKENS  UPDATED           TITLE

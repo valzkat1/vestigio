@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -75,6 +76,33 @@ func firstPositional(args []string) string {
 	return ""
 }
 
+// validKinds lists the closed set for error messages, sorted so the text does
+// not change between runs over a map.
+func validKinds() string {
+	ks := make([]string, 0, len(store.Kinds))
+	for k := range store.Kinds {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return strings.Join(ks, "|")
+}
+
+// shortHash trims a hash for display without assuming it is well formed.
+//
+// A drifted row carries whatever a SQL prompt or a GUI browser left behind, and
+// slicing it blind panicked on anything shorter than the cut — on `edit --fix`,
+// the one command `verify` tells the operator to run to repair exactly those
+// rows. The repair path must survive the worst row it will ever meet.
+func shortHash(h string) string {
+	if h == "" {
+		return "(empty)"
+	}
+	if len(h) <= 12 {
+		return h
+	}
+	return h[:12]
+}
+
 func parseID(args []string) (int64, error) {
 	raw := firstPositional(args)
 	if raw == "" {
@@ -112,6 +140,25 @@ func runProjects(args []string) int {
 }
 
 func runList(args []string) int {
+	// Flags are validated before the store is opened: a value the command cannot
+	// honour must stop it, never be quietly swapped for a default. Silently
+	// falling back is how `--limit=abc` returned thirty rows and looked like an
+	// answer — the same failure the import parser was fixed for.
+	kind, _ := flagValue(args, "kind")
+	if kind != "" && !store.Kinds[kind] {
+		fmt.Fprintf(os.Stderr, "vestigio: invalid kind %q — valid kinds are %s\n", kind, validKinds())
+		return 2
+	}
+	limit := 30
+	if v, ok := flagValue(args, "limit"); ok {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n <= 0 {
+			fmt.Fprintf(os.Stderr, "vestigio: --limit needs a positive whole number, got %q\n", v)
+			return 2
+		}
+		limit = n
+	}
+
 	st, err := openStore()
 	if err != nil {
 		return fail(err)
@@ -124,13 +171,6 @@ func runList(args []string) int {
 	}
 	if hasFlag(args, "all") {
 		project = ""
-	}
-	kind, _ := flagValue(args, "kind")
-	limit := 30
-	if v, ok := flagValue(args, "limit"); ok {
-		if n, err := strconv.Atoi(v); err == nil {
-			limit = n
-		}
 	}
 
 	rows, err := st.List(project, kind, limit)
@@ -243,7 +283,7 @@ func runEdit(args []string) int {
 		fmt.Printf("  tokens %d -> %d\n", cur.Tokens, updated.Tokens)
 	}
 	if updated.Hash != cur.Hash {
-		fmt.Printf("  hash   %s… -> %s…\n", cur.Hash[:12], updated.Hash[:12])
+		fmt.Printf("  hash   %s… -> %s…\n", shortHash(cur.Hash), shortHash(updated.Hash))
 	} else {
 		fmt.Println("  hash unchanged — content is identical")
 	}
