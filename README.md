@@ -71,4 +71,6 @@ Whether vectors are needed is a question for the M2 evaluation set, not for tast
 
 M1 — skeleton. Working MCP server, storage, BM25 recall, exact-content dedupe.
 
+Engram import landed early (`vestigio import`): 179 memories migrated from a real corpus, with project-name consolidation and type collapsing. Self-retrieval baseline on those 179: 100% found by title, 84% ranked first when the query is degraded.
+
 Next: M2 real budget packing + recall evaluation set · M3 near-duplicate merge via simhash · M4 import from Engram and decay-based eviction · M5 multi-platform releases.

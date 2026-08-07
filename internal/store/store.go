@@ -113,6 +113,39 @@ func (s *Store) Remember(project, kind, title, body string) (id int64, created b
 	return id, true, err
 }
 
+// Import stores a memory while preserving its original timestamps.
+//
+// Migration must not rewrite history: a decision made in April is evidence about
+// April, and stamping it with today's date destroys the ordering that makes an
+// imported corpus worth having.
+func (s *Store) Import(project, kind, title, body string, createdAt, updatedAt int64) (id int64, created bool, err error) {
+	if !Kinds[kind] {
+		kind = "reference"
+	}
+	h := contentHash(title, body)
+	tok := EstimateTokens(title) + EstimateTokens(body)
+
+	var existing int64
+	err = s.db.QueryRow(`SELECT id FROM memories WHERE project = ? AND hash = ?`, project, h).Scan(&existing)
+	switch {
+	case err == nil:
+		return existing, false, nil // already imported; leave the original alone
+	case err != sql.ErrNoRows:
+		return 0, false, fmt.Errorf("dedupe lookup: %w", err)
+	}
+
+	res, err := s.db.Exec(
+		`INSERT INTO memories (project, kind, title, body, tokens, hash, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		project, kind, title, body, tok, h, createdAt, updatedAt,
+	)
+	if err != nil {
+		return 0, false, fmt.Errorf("insert: %w", err)
+	}
+	id, err = res.LastInsertId()
+	return id, true, err
+}
+
 // Search runs BM25 over the FTS index. Lower bm25() is better, so results come
 // back already ordered best-first.
 func (s *Store) Search(project, query string, limit int) ([]Memory, error) {

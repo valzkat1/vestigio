@@ -44,3 +44,27 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
   (8 memorias en total). El set de evaluación de paráfrasis es M2 y sigue pendiente.
   Sin probar en macOS/Linux — solo windows/amd64. Binario de 9.9 MB, no medido contra
   alternativas. Module path sigue en USERNAME. Sin commit todavía.
+
+## RECEIPT · Importador de Engram (M4 adelantado)
+- **when**: 2026-08-06T00:00Z
+- **intent**: migrar el corpus real de Engram — M2 necesita corpus real para su set de evaluación
+- **changed**:
+  - internal/importer/engram.go (new) — parseo, mapeo de kinds, consolidación de proyectos
+  - internal/importer/engram_test.go (new) — 7 tests
+  - internal/store/store.go (+30) — Import() preservando timestamps originales
+  - cmd/vestigio/main.go (+50) — comando `import` con --dry-run/--map/--skip
+- **ran**:
+  - `go vet ./...` → exit 0
+  - `go test ./...` → **17 passed, 0 failed** (10 previos + 7 del importador)
+  - `vestigio import --dry-run` → plan revisado antes de escribir
+  - `vestigio import --skip=session_summary --map=...` → **179 importadas, 1 duplicada**,
+    209 totales, 27 session_summary omitidas, 2 vacías
+  - eval de auto-recuperación, 25 memorias de 107 en alcubo:
+    título completo → 100% encontrada / 100% rankeada #1
+    título degradado → 100% encontrada / 84% rankeada #1
+- **cost**: opus · ~12 tool calls
+- **gaps**: el eval es AUTO-RECUPERACIÓN con palabras del propio título, NO paráfrasis
+  semántica — no responde la pregunta de vectores, solo da línea de base. El set real
+  sigue siendo M2. Los 27 session_summary quedaron fuera por decisión del usuario
+  (20% del corpus); siguen en Engram, no se borró nada. 13 memorias exceden solas
+  un budget de 800 tok y el packer de M2 tendrá que truncarlas en lectura.
