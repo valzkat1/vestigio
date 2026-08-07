@@ -97,10 +97,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # `stable`, not the module's own Go version, and for the same reason the
+      # tool below is unpinned: the scanner tracks the latest x/vuln, which
+      # requires a newer toolchain than this module targets. Analysing a module
+      # does not require building it with that module's minimum Go.
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version: stable
 
       # Deliberately @latest while every other action here is pinned to a SHA.
       # A pinned vulnerability scanner goes stale, and a stale scanner reports

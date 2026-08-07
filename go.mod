@@ -1,6 +1,12 @@
 module github.com/valzkat1/vestigio
 
-go 1.22
+// 1.25 rather than 1.22 because of macOS, not because of a language feature.
+// Binaries linked by the 1.22 toolchain are rejected by current dyld on
+// darwin/arm64 with "missing LC_UUID load command" — they build, and then abort
+// on launch. CI caught it on the three-platform matrix's first run, which is
+// exactly why that matrix exists: the README promises a static binary that
+// cross-compiles anywhere, and that promise had quietly stopped being true.
+go 1.25
 
 require modernc.org/sqlite v1.34.5
 
