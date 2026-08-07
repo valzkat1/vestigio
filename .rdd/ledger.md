@@ -143,3 +143,46 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
     dentro del `strings.Cut`. Mismo modo de falla que este recibo cierra, un nivel más abajo.
   - `--skip` no valida contra los tipos que existen: un typo omite nada y no avisa.
   - Solo windows/amd64. Sin commitear.
+
+## RECEIPT · CI, licencia y protección de main en el repo público
+- **when**: 2026-08-07T00:00Z
+- **intent**: el repo ya estaba PÚBLICO, sin licencia, sin CI y con `main` sin protección
+  (`HTTP 404 Branch not protected`). El README invitaba a `go install` sobre código que sin
+  licencia es "todos los derechos reservados" — legible pero no usable.
+- **changed**:
+  - LICENSE — Apache-2.0 (bajada de la API de GitHub, 202 líneas, no transcripta a mano)
+  - .github/workflows/ci.yml — 6 jobs: test x3 SO, race, lint (gofmt+vet+mod tidy), govulncheck
+  - .github/workflows/codeql.yml — CodeQL Go, security-and-quality, + cron semanal
+  - .github/dependabot.yml — gomod + github-actions semanal, modernc agrupado
+  - .github/CODEOWNERS, .github/pull_request_template.md (espeja el formato de recibo)
+  - CONTRIBUTING.md, SECURITY.md (threat model explícito), README badges + secciones
+  - go.mod — `go 1.22` -> `go 1.25`
+- **ran**:
+  - local pre-push: `gofmt -l .` vacío, `go vet` 0, `go test ./...` ok, `go mod tidy` sin drift
+  - CI run 1 (31159627895) → **FAILURE**: `test (macos-latest)` + `govulncheck`
+  - CI run 2 (31159892559) tras los fixes → **SUCCESS, 6/6 jobs verdes**
+  - protección aplicada y **PROBADA como owner**:
+    `git push origin main` → `remote rejected ... Changes must be made through a pull
+    request` + `7 of 7 required status checks are expected`
+    `git push --force origin main` → `remote rejected` igual
+  - PR #3 de Dependabot: 8/8 checks `completed/success`, `mergeStateStatus: CLEAN`
+    → confirma que `analyze` reporta y que la puerta no es un deadlock
+- **cost**: opus · ~20 tool calls
+- **gaps**:
+  - **DEFECTO REAL ENCONTRADO POR CI, no del pipeline**: binarios linkeados con Go 1.22 son
+    rechazados por el dyld actual en darwin/arm64 — `missing LC_UUID load command`, compilan
+    y abortan al arrancar. Los 4 test binaries murieron así en macos-latest mientras Linux y
+    Windows pasaban. El README prometía "cross-compiles anywhere" y en macOS era falso.
+    Arreglado subiendo a Go 1.25, verificado por CI. NO se hizo bisect de la versión exacta
+    que lo arregla — 1.25 tiene margen, podría andar con 1.23 o 1.24.
+  - Error propio en el primer pipeline: `govulncheck` pineado al Go del módulo no podía ni
+    instalarse (x/vuln pide >= 1.25). Falló sin escanear NADA — el peor rojo, parece hallazgo
+    y no lo es.
+  - `required_approving_review_count` quedó en **0** a propósito. Con `enforce_admins: true`
+    y 1 aprobación obligatoria el repo se auto-bloquea: GitHub no deja aprobar PRs propios y
+    el owner es el único con write. El "solo yo mergeo" lo da el permiso de escritura, no el
+    review. Consecuencia honesta: nada obliga a que un PR sea LEÍDO antes de mergear.
+  - 3 PRs de Dependabot abiertos SIN revisar: sqlite 1.34.5→1.56.0 (22 minors), checkout
+    v5→v7, setup-go v6→v7. Verdes en CI, pero verde no es lo mismo que leído.
+  - Sin release ni tag todavía. `go install @latest` sirve el último commit de main.
+  - Secret scanning quedó activo DESPUÉS de 5 commits ya pusheados — no escaneó retroactivo.
