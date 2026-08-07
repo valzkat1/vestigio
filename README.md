@@ -1,5 +1,9 @@
 # vestigio
 
+[![CI](https://github.com/valzkat1/vestigio/actions/workflows/ci.yml/badge.svg)](https://github.com/valzkat1/vestigio/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/valzkat1/vestigio.svg)](https://pkg.go.dev/github.com/valzkat1/vestigio)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 > Local memory for AI coding agents. A trace of what happened — not a retelling.
 
 Works with anything that speaks MCP: Claude Code, Cursor, Windsurf, Cline, Zed, Codex CLI.
@@ -95,3 +99,13 @@ Two things landed ahead of their milestone, both because a real corpus needed th
 - **Inspect and repair commands** (`projects`, `list`, `show`, `edit`, `rm`, `verify`) — a store you cannot look inside is a store you cannot trust, and there is no reason to make an agent pay for the ability to look.
 
 Next: M2 real budget packing + recall evaluation set · M3 near-duplicate merge via simhash · M4 decay-based eviction · M5 multi-platform releases.
+
+## Contributing
+
+Pull requests are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) is what review will hold you to. Everything reaches `main` through a pull request with CI green, the maintainer included.
+
+Security issues go through [private advisories](https://github.com/valzkat1/vestigio/security/advisories/new), not the issue tracker. The threat model is written down plainly in [SECURITY.md](SECURITY.md) — it is a local single-user tool, and the failure it takes most seriously is quiet data loss.
+
+## License
+
+[Apache-2.0](LICENSE).

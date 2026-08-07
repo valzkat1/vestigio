@@ -1,0 +1,28 @@
+version: 2
+
+updates:
+  # Actions are pinned to commit SHAs in this repository, which is what stops a
+  # moved tag from silently changing what runs in CI. The cost of pinning is
+  # that a SHA never updates itself. Dependabot is what pays that cost: it
+  # reads the "# v5" comment next to each SHA and opens a pull request when the
+  # tag moves. Pinning without this is not security, it is just rot.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(ci)"
+
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # modernc.org/sqlite pulls a family of packages that move together.
+      # Reviewing them as one pull request is honest about how they are
+      # actually released; splitting them just produces five PRs that must all
+      # merge anyway.
+      modernc:
+        patterns: ["modernc.org/*"]

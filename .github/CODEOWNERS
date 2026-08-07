@@ -1,0 +1,4 @@
+# Every path, one owner. Branch protection requires an approving review from a
+# code owner, which on a single-maintainer repository means: nothing reaches
+# main without @valzkat1 having looked at it.
+*       @valzkat1

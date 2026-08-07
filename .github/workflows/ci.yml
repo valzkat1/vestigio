@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege, and on a public repository this is not a formality: every
+# fork's pull request runs with this token. It reads code and nothing else.
+#
+# Note the trigger above is `pull_request`, never `pull_request_target`. The
+# latter runs the BASE branch's workflow with a writable token and access to
+# secrets, while checking out the FORK's code — which is how a stranger's pull
+# request ends up executing with the repository's own credentials. Nothing in
+# this pipeline needs secrets, so nothing here needs that trigger.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: build
+        run: go build ./...
+
+      - name: test
+        run: go test ./...
+
+  # The three-platform matrix is the claim being tested, not ceremony. The
+  # README promises a static CGO-free binary that cross-compiles anywhere, and
+  # modernc.org/sqlite is the reason that promise is credible. If it ever stops
+  # being true, it stops here rather than in someone's install.
+
+  race:
+    name: race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # The MCP server reads stdin and writes stdout while holding an open
+      # SQLite handle. Linux only: the detector needs cgo, and one platform is
+      # enough to catch a data race that is not platform-specific anyway.
+      - name: test -race
+        run: go test -race ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # A go.mod that drifts from its imports is how an unreviewed dependency
+      # arrives quietly. If tidy changes anything, the change was never
+      # committed and never reviewed.
+      - name: go mod tidy is committed
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # Deliberately @latest while every other action here is pinned to a SHA.
+      # A pinned vulnerability scanner goes stale, and a stale scanner reports
+      # clean for exactly the vulnerabilities it has not heard about yet. It is
+      # an official golang.org/x tool, which is what makes the tradeoff
+      # acceptable.
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: scan
+        run: govulncheck ./...
