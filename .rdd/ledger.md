@@ -186,3 +186,178 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
     v5→v7, setup-go v6→v7. Verdes en CI, pero verde no es lo mismo que leído.
   - Sin release ni tag todavía. `go install @latest` sirve el último commit de main.
   - Secret scanning quedó activo DESPUÉS de 5 commits ya pusheados — no escaneó retroactivo.
+
+## RECEIPT · Tests de round-trip para internal/mcp
+- **when**: 2026-08-07T00:00Z
+- **intent**: `internal/mcp` es el producto entero — recall/remember/forget sobre JSON-RPC —
+  y estaba en **0.0% de coverage**. El único test del paquete (`tools_test.go`) mide bytes del
+  payload de `tools/list`; nunca instancia el servidor ni corre una sola línea de `server.go`.
+  Paso 1 del orden acordado en la decisión #192 (antes de retrieve, del trinquete de CI y de
+  mutation testing).
+- **changed**:
+  - internal/mcp/server_test.go — NUEVO, 24 tests. Único archivo tocado del repo.
+    Manejan el loop real de `Serve` (stdin `strings.Reader` → stdout `strings.Builder`) contra
+    un `store.Store` real en `t.TempDir()`. Cero mocks, cero dobles: se ejercita el mismo seam
+    que habla un agente por stdio.
+  - `server.go` SIN cambios (las mutaciones de abajo se aplicaron y revirtieron; `git diff` limpio).
+- **ran**:
+  - `go test ./internal/mcp/...` → **ok**, 24 tests verdes
+  - `go test ./... -cover` → suite completa verde; `internal/mcp` **0.0% → 98.8%**
+  - `go vet ./internal/mcp/...` → 0 · `gofmt -l internal/mcp/` → vacío
+  - `go tool cover -func` → único hueco: `fail()` 75%
+  - **MUTATION CHECK manual — 3 mutantes inyectados en `server.go`, cada uno revertido**:
+    1. `if used+cost > budget && len(shown) > 0` → `if false && ...` (el budget deja de ser techo)
+       → FAIL en `TestRecallHonoursBudgetCeiling` + los 3 subtests de `TestRecallDefaultsBudgetTo800`
+    2. `budget = 800` → `budget = 100000` (default roto)
+       → FAIL en los 3 subtests de `TestRecallDefaultsBudgetTo800`
+    3. `reply()` sin el guard `len(id) == 0` (responde a notificaciones)
+       → FAIL en `TestNotificationsGetNoReply`
+    Los tests muerden. No son decoración de coverage.
+- **cubre**: handshake (initialize / ping / tools/list) · remember create→merge con el MISMO id ·
+  validación de title/body vacíos y en blanco · recall devuelve el body completo en un solo paso ·
+  recall project-scoped · "no memories matched" · **`budget_tokens` como techo DURO** ·
+  default 800 en omitted/zero/negative · forget por id y por query · `id or query is required` ·
+  notificaciones sin respuesta (5 métodos) · frame malformado/truncado/vacío no mata el transporte ·
+  id devuelto verbatim (string y número) · errores del store como texto, no como panic ·
+  round-trip completo de sesión en un solo pipe.
+- **cost**: opus · ~15 tool calls
+- **gaps**:
+  - `fail()` queda en **75%** y se deja así a propósito: la rama `len(id) == 0` es INALCANZABLE
+    porque `handle()` ya filtra las notificaciones antes de llamarla. Es código defensivo muerto,
+    no un test faltante. Escribir un test que lo cubra requeriría llamar a `fail` directamente,
+    o sea testear una ruta que el protocolo no puede producir.
+  - El test de budget prueba que el techo se RESPETA, no que el packing sea BUENO. Truncar cuerpos
+    y cambiar una memoria larga mal rankeada por dos cortas mejores es M2 y no está testeado
+    porque no está implementado.
+  - `internal/retrieve` sigue en **0.0%** — BM25, Scorer y RRF sin un solo test. Es el siguiente
+    en el orden acordado, junto con el set de evaluación de M2.
+  - `cmd/vestigio` sigue en 8.3%. El bug abierto de `runImport` (`--map old=new` con espacio falla
+    en silencio, ver #188) sigue sin arreglar y sin test.
+  - Total del repo: subió de 30.3% a ~46%. Sin commitear.
+  - Entorno: `go` no está en el PATH de Git Bash (vive en `scoop/apps/go/current/bin`) y no hay
+    `sd` instalado. No es un gap del código, pero cuesta un intento fallido a cada rato.
+
+## RECEIPT · internal/retrieve al 100% y set de evaluación de recall (M2)
+- **when**: 2026-08-07T00:00Z
+- **intent**: paso 2 del orden acordado en #192 — tests de `internal/retrieve` + set de evaluación
+  de M2, "mismo andamiaje, dos entregables".
+- **HALLAZGO QUE CAMBIÓ LA TAREA**: `rg "internal/retrieve" --glob '*.go'` devuelve **cero
+  importadores**. `Fuse` no tiene un solo call site y `Scorer` no tiene implementaciones. El
+  ranking que corre en producción es `ORDER BY bm25(memories_fts)` en `store.search`
+  (store.go:173) — lo hace SQLite. La memoria #192 decía "internal/retrieve — BM25, Scorer, RRF";
+  BM25 no está ahí y el paquete está desconectado. Subirlo a 100% mueve un número, no el producto.
+  Corregido en memoria #195. **Consecuencia para el paso 3**: un trinquete de coverage en CI va a
+  quedar inflado por un paquete que nadie ejecuta.
+- **changed**:
+  - internal/retrieve/retrieve_test.go — NUEVO, 13 tests + un Example. Fijan el contrato de RRF
+    para el día que M2 conecte un segundo scorer: fusión con una sola lista es no-op (invariante
+    de v1), determinismo en empates contra el orden aleatorio de mapas de Go (200 corridas),
+    Score ignorado por completo, unión y no intersección, k=60 y su amortiguación.
+    El encabezado del archivo dice explícitamente que el paquete no tiene call sites, para que
+    el 100% no se lea como "la capa de retrieval está cubierta".
+  - internal/store/eval_test.go — NUEVO. Set de evaluación: corpus de 12 memorias realistas
+    (español/inglés mezclados) + 15 queries PARAFRASEADAS, con trinquete por conteo.
+    Más 3 tests de propiedad: términos literales rankean primero, términos ausentes no devuelven
+    nada, y el trade OR (recall) vs SearchAll/AND (precisión en el camino destructivo).
+  - `store.go` y `server.go` SIN cambios. `git diff --stat` limpio salvo este ledger.
+- **ran**:
+  - `go test ./internal/retrieve/... -cover` → **0.0% → 100.0%**
+  - `go test ./internal/store/ -run TestRecall -v` → **recall@1 = 67% (10/15) ·
+    recall@3 = 80% (12/15) · 1 no recuperada jamás**
+  - `go test -run TestRecall -count=5` → estable, mismo resultado 5 veces (un trinquete flaky
+    es peor que ninguno)
+  - `go test ./... -cover` → suite completa verde · `go vet ./...` 0 · `gofmt -l .` vacío
+  - **MUTATION CHECK, inyectado y revertido**: `Search` de `SanitizeFTS` a `SanitizeFTSAll`
+    (OR → AND). Recall se desploma **67% → 13%**, 13 de 15 memorias dejan de aparecer.
+    Y acá está lo importante: **TODA la suite preexistente queda VERDE** — cmd, importer,
+    mcp (98.8%), retrieve (100%) y los tests viejos de store. Solo lo cazan los 2 tests nuevos
+    del eval. Un cambio que destruye el producto pasa un suite "cubierto".
+- **cost**: opus · ~18 tool calls
+- **gaps**:
+  - **El eval set sumó CERO statement coverage**: store quedó en 72.9%, exactamente igual que
+    antes. Es el punto entero del archivo — coverage y calidad de retrieval son ejes distintos,
+    y este repo ahora tiene evidencia propia de eso, no una opinión.
+  - Casos que HOY fallan y quedan documentados como la deuda de M2:
+    MISS total "dónde quedan registradas las corridas" → "Ledger de recibos" (cero términos
+    compartidos) · #6 "sistema de recuerdos persistente en Golang" (el caso de M0: Golang≠Go) ·
+    #4 "por qué no imprimir logs por salida estándar" → memoria de stderr. Todos el mismo
+    problema: no hay puente semántico. Eso es lo que M2 debe arreglar y ahora hay vara para medirlo.
+  - El trinquete falla también cuando el recall MEJORA, para forzar a subir el piso. Es
+    deliberado, pero es una decisión discutible: hace ruido en un PR que mejora retrieval.
+  - 15 queries es un set CHICO. Un caso que cambia mueve el número 6,7 puntos. Sirve como
+    detector de regresión grosera, no para comparar dos rankers parecidos.
+  - Las queries las escribí yo, que ya conocía el corpus. Un set escrito por otra persona, o
+    tomado de queries reales del log, sería menos complaciente. Sesgo conocido, no medido.
+  - `cmd/vestigio` sigue en 8.3% y el bug de `runImport` (`--map old=new` con espacio falla en
+    silencio, #188) sigue abierto. Nada de esto lo toca.
+  - Sin commitear.
+
+## CORRECTION · el bug de `--map` en runImport NO estaba abierto
+- **when**: 2026-08-07T00:00Z
+- **qué corrijo**: los dos recibos anteriores de esta sesión listan como gap
+  "el bug de `runImport` (`--map old=new` con espacio falla en silencio, #188) sigue abierto".
+  **Es falso.** Fue arreglado en `ff99658` — "fix(import): reject unrecognised arguments instead
+  of skipping them" — antes de esta sesión.
+- **cómo lo verifiqué** (binario compilado, no lectura de código):
+  - `vestigio import export.json --map old=new` → exit **2**, "--map takes its value inline"
+  - `vestigio import export.json --map=old=new` → exit **1** (parsea bien, el archivo no existe)
+  - `--verbose` → exit 2 · `uno.json dos.json` → exit 2
+  - `parseImportArgs` en main.go:91 con tests en main_test.go · `usage()` y docs/cli.md:120
+    ya documentan la forma inline
+- **causa del error**: copié el gap de la memoria #188 sin contrastarlo contra `git log`. Una
+  memoria vieja se lee como dato fresco si no le mirás la fecha. Corregido en memoria #196; la
+  línea "BUG ABIERTO" de #188 queda anulada.
+- **por qué importa más que el bug**: un ledger de recibos existe para ser evidencia. Un gap
+  inventado en un recibo vale menos que no tener recibo, porque el próximo que lo lea va a ir
+  a arreglar algo que ya está arreglado.
+
+## RECEIPT · tres bugs reales en cmd/vestigio, uno de ellos un panic
+- **when**: 2026-08-07T00:00Z
+- **intent**: el bug que veníamos a arreglar (`--map` en runImport) resultó CERRADO — ver la
+  corrección de arriba. La lectura útil de "vamos al bug" pasó a ser: `cmd/vestigio` está en
+  **8.3%**, casi ningún comando del CLI se ejecutó jamás en un test, y ahí es donde se esconde
+  un wrong-answer silencioso. Se fue a buscar bugs de verdad, con tests como instrumento.
+- **changed**:
+  - cmd/vestigio/admin_test.go — NUEVO. Maneja los `run*` reales contra una base descartable
+    (`t.Setenv("VESTIGIO_DB")`, que `store.DefaultPath()` respeta), con `capture()` swapeando
+    `os.Stdout` por un pipe. Para simular daño usa `sql.Open("sqlite", …)` y UPDATE crudo: es
+    literalmente el escenario que `verify` existe para cazar.
+  - cmd/vestigio/admin.go — los tres fixes: `shortHash()`, validación de `--limit`, validación
+    de `--kind`, helper `validKinds()`.
+  - docs/cli.md — la fila de `--limit` documentaba el bug como diseño; corregida.
+- **BUGS ENCONTRADOS** (los tres los encontró escribir los tests, no leer el código — yo había
+  leído `runEdit` entero en esta misma sesión y no vi el `[:12]`):
+  1. **PANIC**: `runEdit` hacía `cur.Hash[:12]` a pelo → `slice bounds out of range [:12] with
+     length 8` con cualquier hash de menos de 12 caracteres. `vestigio verify` detecta filas
+     drifteadas e imprime "repair with: vestigio edit <id> --fix": **la ruta de reparación
+     crasheaba sobre la fila que existe para reparar.** Fix: `shortHash()`.
+  2. **`--limit` inválido tragado en silencio**: `--limit=abc` devolvía 30 filas y parecía una
+     respuesta. Misma clase exacta que el bug de `--map` que `ff99658` ya había arreglado en el
+     importer. `--limit=0` y `--limit=-1` también pasaban. Fix: valida antes de abrir la base,
+     exit 2.
+  3. **`--kind` sin validar**: `--kind=decisionn` devolvía "0 memories", que se lee como "nunca
+     guardaste nada" en vez de "eso no es un kind". Fix: valida contra `store.Kinds`, exit 2
+     listando el set válido.
+- **ran**:
+  - primera corrida de los tests nuevos, ANTES de los fixes: 3 tests en rojo + el panic con
+    stacktrace. Los bugs se confirmaron con salida real, no con razonamiento.
+  - `go test ./cmd/vestigio/ -cover` tras los fixes → **ok, 8.3% → 63.2%**
+  - `go test ./... -cover` → suite completa verde · `go vet ./...` 0 · `gofmt -l .` vacío
+  - **binario compilado**: `list --limit=abc` → exit **2** + "--limit needs a positive whole
+    number" · `list --kind=decisionn` → exit **2** + "valid kinds are bugfix|constraint|decision|
+    pattern|reference" · `list --limit=5` → exit 0
+- **cost**: opus · ~14 tool calls
+- **gaps**:
+  - **CAMBIO DE COMPORTAMIENTO DOCUMENTADO**: `docs/cli.md:177` decía "A value that is not an
+    integer is ignored and the default stands". O sea que el bug 2 estaba escrito como si fuera
+    diseño. Se cambió el código y el doc, por coherencia con la regla que el propio proyecto
+    declara en `parseImportArgs` y en docs/cli.md:120 — pero es una decisión reversible y es del
+    usuario, no mía. Queda marcada acá y en el mensaje de cierre.
+  - `runEdit` con un flag mal tipeado (`--titel=X`) sigue cayendo en el editor interactivo en
+    vez de fallar. Misma familia que los bugs 2 y 3, NO arreglado: tocar esa rama implica
+    decidir qué hace `edit` con flags desconocidos, y eso cambia una UX que el usuario no pidió
+    cambiar. Reportado, no ejecutado.
+  - `editInEditor` sigue sin test: abre `$VISUAL`/`$EDITOR`, cuesta un fake binario. 63.2% es el
+    techo cómodo sin eso.
+  - `runMCP`, `main()` y `detectProject()` con git remote real siguen sin cubrir.
+  - Los fixes son de comportamiento de CLI, sin migración ni datos tocados. Sin commitear.
