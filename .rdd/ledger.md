@@ -416,3 +416,74 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
   - El commit anterior (`3bb1172`, "increase coverage") sigue con un mensaje que esconde tres bug
     fixes y un cambio de comportamiento. No se reescribió historia; queda dicho acá.
   - Sin commitear.
+
+## RECEIPT · PR #6 abierto, rebasado y verde
+- **when**: 2026-08-07T00:00Z
+- **intent**: pushear `add-coverage` y abrir el PR del trabajo de validación de argumentos.
+- **HALLAZGO durante el proceso**: el PR salió `CONFLICTING / DIRTY`. El PR #5 se había
+  **squash-mergeado** a main como `95b3162` mientras se trabajaba. El squash crea un SHA nuevo,
+  así que `3bb1172` seguía sin estar "contenido" en main, la merge-base quedó en `93fb118`, y el
+  PR re-proponía los cuatro archivos de test que main YA tenía — chocando contra el squash.
+  `git branch -r --contains <sha>` no lo detecta: hay que comparar CONTENIDO (`git ls-tree
+  origin/main`), no SHAs.
+- **changed**:
+  - rebase `git rebase --onto origin/main 3bb1172 add-coverage` — descarta el commit ya
+    squasheado, replaya solo el nuevo. Resultado: 1 commit (`3a70326`), 5 archivos, +361/-86.
+  - `push --force-with-lease`. Backup local en `backup/add-coverage-pre-rebase` (`d079dca`).
+  - body del PR reescrito al scope real: el anterior describía el trabajo de tests, que ya
+    estaba en main vía #5. Un PR que describe cambios que no contiene es un recibo falso.
+- **ran**:
+  - los 4 checks del template, con salida real: `gofmt -l .` vacío · `go vet ./...` 0 ·
+    `go test ./...` **88 tests de nivel superior, 143 con subtests, 0 fallidos, 0 skipped**,
+    5/5 paquetes ok · `go mod tidy` sin drift en go.mod/go.sum
+  - suite re-corrida DESPUÉS del rebase: verde
+  - CI del PR: **8/8 verdes** — test ubuntu/macos/windows, race, lint, govulncheck, analyze,
+    CodeQL. Estado final `MERGEABLE / CLEAN`.
+- **decisión de proceso**: el skill `branch-pr` se cargó y se descartó parcialmente tras
+  verificarlo contra el repo. Exige issue con `status:approved`, una label `type:*` y branch
+  `^(feat|fix|...)/...`. vestigio no tiene workflow de validación de PR y las labels `type:*` y
+  `status:approved` **no existen** en el repo. Aplicarlo habría sido inventar proceso y crear un
+  issue que nada exige. Se tomó lo que sí transfiere: conventional commits, sin `Co-Authored-By`,
+  y el template propio del repo.
+- **cost**: opus · ~14 tool calls
+- **gaps**:
+  - El branch se llama `add-coverage`, que no matchea la convención `type/descripcion` del skill.
+    No se renombró: vestigio no valida nombres de branch por CI, y renombrar un branch ya
+    pusheado con un PR abierto cuesta más de lo que rinde.
+  - **Se reescribió historia de un branch remoto** (`--force-with-lease`). Era un PR recién
+    abierto, sin reviews y sin nadie más trabajando encima. Backup local conservado.
+  - ~~El PR no se mergeó~~ → **MERGEADO** con squash como `331a7cd` el 2026-08-07T09:44Z, con
+    los 8 checks verdes. Branch remoto borrado. Ver el recibo siguiente.
+  - El commit de #5 en main sigue titulado `increase coverage`, escondiendo tres bug fixes y un
+    cambio de comportamiento. Ya está en main; reescribir esa historia costaría más que el
+    beneficio. Queda dicho acá y en el body del PR.
+
+## RECEIPT · PR #6 mergeado a main
+- **when**: 2026-08-07T09:44Z
+- **intent**: mergear el PR #6, pedido explícitamente.
+- **ran**:
+  - verificación previa: `git fetch origin` — main NO se había movido desde el rebase
+    (seguía en `95b3162`) · `MERGEABLE / CLEAN` · **8/8 checks en pass**
+  - `gh pr merge 6 --squash --delete-branch`, con subject y body explícitos para no perder el
+    mensaje del commit. Squash porque es la convención observable en main: `(#5)`, `(#4)`, `(#3)`
+  - resultado: **`331a7cd fix(cli): reject unrecognised arguments instead of scanning past them
+    (#6)`** en main
+  - verificación posterior sobre main ya actualizado: `go test ./... -count=1` → 5/5 paquetes ok,
+    y `parseArgs` presente en `cmd/vestigio/admin.go`. El merge no es solo verde en CI: se probó
+    el árbol resultante localmente.
+- **gotcha**: `gh pr merge --delete-branch` **falló en su paso local** — "Your local changes to
+  .rdd/ledger.md would be overwritten by checkout". El merge en GitHub YA había ocurrido; lo que
+  abortó fue el checkout local posterior. Un error de gh a mitad de camino no significa que el
+  merge no entró: hay que verificar el estado real (`gh pr view --json state,mergeCommit`) antes
+  de reintentar nada. El remoto `add-coverage` sí quedó borrado; solo faltó limpiar el local.
+- **changed**: `.rdd/ledger.md` — este recibo, más la corrección de la línea "el PR no se mergeó"
+  del recibo anterior, que quedó obsoleta a los tres minutos de escribirse.
+- **cost**: opus · ~8 tool calls
+- **gaps**:
+  - Este recibo va en su propio branch `chore/rdd-receipt-pr-6` porque `main` está protegida y no
+    acepta push directo. Es ceremonia para un archivo de texto, pero la alternativa es dejar
+    evidencia sin commitear, que es exactamente lo que RDD existe para no hacer.
+  - `backup/add-coverage-pre-rebase` (`d079dca`) sigue existiendo en local. Ya no hace falta —
+    su contenido está en main vía el squash — pero se deja hasta que el usuario confirme.
+  - El squash colapsó el commit en uno solo. El mensaje se preservó entero, pero el historial
+    de main ya no muestra que hubo un rebase de por medio. Queda solo acá.
