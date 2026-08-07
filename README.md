@@ -57,6 +57,24 @@ Every other MCP client takes the same `command` + `args` shape.
 
 Projects are detected from the git remote, falling back to the directory name. The resolved name is printed to stderr on startup — silent misdetection makes an empty recall look like data loss.
 
+## CLI
+
+Rule 1 says the operational surface belongs to humans. This is that surface — none of it is exposed over MCP, so none of it costs an agent context.
+
+```
+vestigio projects               Inventory: memories and tokens per project
+vestigio list [--all] [--kind=K] [--limit=N] [--project=NAME]
+vestigio show <id>              Print one memory in full
+vestigio edit <id> [--fix]      Rewrite a memory, recomputing hash and tokens
+vestigio rm <id> [--yes]        Delete a memory
+vestigio verify                 Report rows whose derived columns drifted
+vestigio import <export.json>   Migrate an Engram export
+```
+
+**Never edit the database with a GUI browser or raw SQL.** Triggers keep the FTS index in sync, but `hash` and `tokens` are computed on write and no trigger touches them — a stale hash silently stops `remember` from deduplicating, so it inserts near-copies instead of updating. SQLite has no native `sha256()`, which makes maintaining the hash from SQL impossible; that is why `edit` exists. `verify` finds rows where it already happened, `edit --fix` repairs them.
+
+Full reference with flags, exit codes and recipes: **[docs/cli.md](docs/cli.md)**.
+
 ## Retrieval
 
 v1 is BM25 over SQLite FTS5 with Porter stemming.
@@ -69,8 +87,11 @@ Whether vectors are needed is a question for the M2 evaluation set, not for tast
 
 ## Status
 
-M1 — skeleton. Working MCP server, storage, BM25 recall, exact-content dedupe.
+M1 — skeleton, verified against the built binary. Working MCP server, storage, BM25 recall, exact-content dedupe. 10/10 tests green; `tools/list` measured at 1,077 bytes on the wire, 8.2x smaller than Engram's `agent` profile.
 
-Engram import landed early (`vestigio import`): 179 memories migrated from a real corpus, with project-name consolidation and type collapsing. Self-retrieval baseline on those 179: 100% found by title, 84% ranked first when the query is degraded.
+Two things landed ahead of their milestone, both because a real corpus needed them:
 
-Next: M2 real budget packing + recall evaluation set · M3 near-duplicate merge via simhash · M4 import from Engram and decay-based eviction · M5 multi-platform releases.
+- **Engram import** (`vestigio import`) — 179 memories migrated, with project-name consolidation and type collapsing. Self-retrieval baseline on those 179: 100% found by title, 84% ranked first when the query is degraded.
+- **Inspect and repair commands** (`projects`, `list`, `show`, `edit`, `rm`, `verify`) — a store you cannot look inside is a store you cannot trust, and there is no reason to make an agent pay for the ability to look.
+
+Next: M2 real budget packing + recall evaluation set · M3 near-duplicate merge via simhash · M4 decay-based eviction · M5 multi-platform releases.

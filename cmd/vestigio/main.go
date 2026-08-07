@@ -75,16 +75,23 @@ func runMCP(args []string) int {
 	return 0
 }
 
-// runImport migrates an Engram JSON export. Import is a CLI command and not an
-// MCP tool on purpose: an agent never needs to call it, so it costs no context.
-func runImport(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: vestigio import <export.json> [--dry-run] [--map old=new,...] [--skip type,...]")
-		return 2
-	}
+const importUsage = "usage: vestigio import <export.json> [--dry-run] [--map=old=new,...] [--skip=type,...]"
 
+// parseImportArgs reads the import flags. Every flag carries its value inline,
+// after "=".
+//
+// An unrecognised argument is an error rather than something to skip past, and
+// that is the whole point of this function existing separately. The previous
+// parser ignored anything it did not recognise, so "--map old=new" split into a
+// bare "--map" that matched no case and an "old=new" that looked like a
+// positional — which silently replaced the export path. Import then ran against
+// a file named "old=new" and reported a plain "not found", pointing nowhere near
+// the flag that caused it. A wrong answer delivered quietly is the failure mode
+// this whole project is built against.
+func parseImportArgs(args []string) (string, importer.Options, error) {
 	opt := importer.Options{ProjectMap: map[string]string{}, SkipTypes: map[string]bool{}}
 	path := ""
+
 	for _, a := range args {
 		switch {
 		case a == "--dry-run":
@@ -99,12 +106,34 @@ func runImport(args []string) int {
 			for _, t := range strings.Split(strings.TrimPrefix(a, "--skip="), ",") {
 				opt.SkipTypes[strings.TrimSpace(t)] = true
 			}
-		case !strings.HasPrefix(a, "--"):
+		case a == "--map" || a == "--skip":
+			return "", opt, fmt.Errorf("%s takes its value inline: %s=VALUE", a, a)
+		case strings.HasPrefix(a, "-"):
+			return "", opt, fmt.Errorf("unknown flag %q\n%s", a, importUsage)
+		case path != "":
+			return "", opt, fmt.Errorf("unexpected argument %q — the export path is already %q", a, path)
+		default:
 			path = a
 		}
 	}
+
 	if path == "" {
-		fmt.Fprintln(os.Stderr, "vestigio: no export file given")
+		return "", opt, fmt.Errorf("no export file given\n%s", importUsage)
+	}
+	return path, opt, nil
+}
+
+// runImport migrates an Engram JSON export. Import is a CLI command and not an
+// MCP tool on purpose: an agent never needs to call it, so it costs no context.
+func runImport(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, importUsage)
+		return 2
+	}
+
+	path, opt, err := parseImportArgs(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "vestigio:", err)
 		return 2
 	}
 
@@ -185,7 +214,9 @@ Inspect and edit:
   vestigio verify                 Report rows whose hash or tokens drifted
 
   Import an Engram export:
-  vestigio import <export.json> [--dry-run] [--map old=new] [--skip type]
+  vestigio import <export.json> [--dry-run] [--map=old=new,...] [--skip=type,...]
+       Flag values are inline, after "=". A space-separated form is rejected
+       rather than ignored, so it can never be mistaken for the export path.
 
 Tools exposed over MCP: recall, remember, forget.
 Operational commands stay out of MCP on purpose — every tool exposed to an
