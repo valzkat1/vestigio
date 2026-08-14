@@ -1,0 +1,134 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+# CI runs with contents:read. This one needs write, and only because creating a
+# release IS a write to the repository. Nothing else here is elevated, and the
+# trigger is a tag push — which only someone with push access to this repository
+# can perform. A fork cannot reach this workflow.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # CI already ran on main, and that is not good enough here. A tag can be
+      # pushed from any commit, and a release is the one artefact that reaches
+      # other people's machines. "It was green last week" is not evidence about
+      # what is in this tag.
+      - name: test
+        run: go test ./...
+
+      # Six targets from one runner, no toolchains installed, no containers.
+      # That is what CGO_ENABLED=0 buys, and it is the reason modernc.org/sqlite
+      # was chosen over the cgo driver — the same decision that makes the binary
+      # static also makes this job twelve lines long.
+      #
+      # -trimpath strips local filesystem paths out of the binary; -s -w drop the
+      # symbol table and DWARF, taking it from ~10 MB to ~7 MB.
+      - name: build
+        env:
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+
+          for target in \
+            windows/amd64 windows/arm64 \
+            darwin/amd64  darwin/arm64 \
+            linux/amd64   linux/arm64
+          do
+            os="${target%/*}"
+            arch="${target#*/}"
+            name="vestigio_${version}_${os}_${arch}"
+            bin="vestigio"
+            [ "$os" = "windows" ] && bin="vestigio.exe"
+
+            mkdir -p "build/$name"
+            GOOS="$os" GOARCH="$arch" go build \
+              -trimpath \
+              -ldflags "-s -w -X github.com/valzkat1/vestigio/internal/mcp.Version=${version}" \
+              -o "build/$name/$bin" ./cmd/vestigio
+
+            # Apache-2.0 section 4(a): recipients of a distribution get a copy of
+            # the licence. Shipping a bare binary would not satisfy that.
+            cp LICENSE README.md "build/$name/"
+
+            if [ "$os" = "windows" ]; then
+              (cd build && zip -qr "../dist/$name.zip" "$name")
+            else
+              tar -czf "dist/$name.tar.gz" -C build "$name"
+            fi
+          done
+
+          (cd dist && sha256sum ./* > checksums.txt)
+          ls -la dist
+
+      # A binary that reports the wrong version is a wrong answer delivered
+      # quietly, months later, in someone else's bug report. Version is injected
+      # by the linker, so it is worth two seconds to confirm it landed.
+      - name: the linux binary reports the tag
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          got=$(./build/vestigio_${version}_linux_amd64/vestigio version)
+          echo "$got"
+          [ "$got" = "vestigio ${version}" ] || {
+            echo "::error::binary reports '$got', expected 'vestigio ${version}'"
+            exit 1
+          }
+
+      # Written to a file rather than piped from a heredoc: a heredoc terminator
+      # has to sit at column zero, which fights YAML block indentation and fails
+      # in a way that looks like a shell bug.
+      - name: release notes
+        run: |
+          cat > release-notes.md <<'NOTES'
+          ## Install
+
+          Download the archive for your platform, extract it, and put `vestigio` on your `PATH`.
+          Verify it first — `checksums.txt` is in the assets:
+
+          ```bash
+          sha256sum -c checksums.txt --ignore-missing
+          ```
+
+          **macOS**: these binaries are not signed or notarised. Gatekeeper quarantines anything
+          downloaded from the internet, so clear the attribute once after extracting:
+
+          ```bash
+          xattr -d com.apple.quarantine ./vestigio
+          ```
+
+          Or build from source, which is never quarantined:
+
+          ```bash
+          go install github.com/valzkat1/vestigio/cmd/vestigio@latest
+          ```
+
+          Then point your MCP client at it — `docs/codex.md` for Codex CLI, the README for the rest.
+          NOTES
+
+      # gh is preinstalled on the runner. A third-party release action would be
+      # another dependency to review and pin for something one command does.
+      # --generate-notes appends the commit log below the text above.
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            --generate-notes \
+            dist/*

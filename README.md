@@ -41,11 +41,32 @@ That budget is enforced in the build, not by good intentions — `TestToolSchema
 
 ## Install
 
+From source, if you have Go:
+
 ```bash
 go install github.com/valzkat1/vestigio/cmd/vestigio@latest
 ```
 
-Single static binary, no CGO, no runtime. SQLite is [`modernc.org/sqlite`](https://modernc.org/sqlite) — pure Go, so it cross-compiles anywhere.
+Or download a binary from [releases](https://github.com/valzkat1/vestigio/releases) — Windows, macOS
+and Linux, `amd64` and `arm64`. Extract it, put `vestigio` on your `PATH`, and check it against
+`checksums.txt`:
+
+```bash
+sha256sum -c checksums.txt --ignore-missing
+```
+
+**macOS**: the binaries are not signed or notarised, so Gatekeeper quarantines them like anything
+else downloaded from a browser. Clear the attribute once, or build from source instead:
+
+```bash
+xattr -d com.apple.quarantine ./vestigio
+```
+
+Single static binary, no CGO, no runtime. SQLite is [`modernc.org/sqlite`](https://modernc.org/sqlite)
+— pure Go, which is why all six targets cross-compile from one machine with no toolchains installed.
+
+`vestigio version` reports `dev` when built from source and the release tag otherwise, so a bug
+report can never be ambiguous about what was running.
 
 ## Configure
 
