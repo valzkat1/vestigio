@@ -697,3 +697,59 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
   - **La configuración de remotos quedó como estaba.** Renombrarlos es decisión del usuario, pero
     mientras `origin` sea el fork, cada `git push` sin argumentos va a rebotar.
   - PR #9 **abierto, no mergeado**. Verde en CI no es lo mismo que leído.
+
+## RECEIPT · Release multiplataforma — binarios para 6 targets
+- **when**: 2026-08-13T00:00Z
+- **intent**: el usuario pidió "el runtime para Windows e iOS". `go install` era la única entrada,
+  o sea que para correr esto había que instalar Go primero. Cero tags, cero releases, cero workflow.
+- **iOS RECHAZADO, con evidencia del compilador, no con una opinión**:
+  `GOOS=ios GOARCH=arm64 CGO_ENABLED=0 go build` → **`ios/arm64 requires external (cgo) linking,
+  but cgo is not enabled`**. Con `CGO_ENABLED=1` pide clang. "Sin CGO" no es una preferencia acá:
+  es lo que justifica elegir `modernc.org/sqlite`, lo que hace estático al binario y lo que permite
+  cross-compilar. Además iOS no tiene shell — un MCP server ES un subproceso lanzado por stdio, y
+  ningún cliente MCP corre ahí. `GOOS=ios` existe para gomobile (librería estática dentro de una app
+  Swift), no para ejecutables. Se interpretó como **macOS**, que sí anda.
+- **changed** (commit `9073194`):
+  - `.github/workflows/release.yml` (new, 134 líneas) — dispara con tag `v*`, 6 targets desde un
+    runner ubuntu, archivos + checksums, release por `gh`.
+  - `internal/mcp/version.go` — **`const` → `var`**. `-ldflags -X` solo escribe en VARIABLES; una
+    const se pliega en compilación y el linker no la alcanza. Como const, cada release habría
+    llevado el número que alguien editó a mano por última vez. Default ahora `dev`.
+  - `README.md` (+23) — instalación por descarga, checksums, cuarentena de macOS.
+  - `docs/cli.md`, `docs/codex.md` — el banner de ejemplo decía `vestigio 0.1.0`; ahora `dev`.
+- **ran**:
+  - **inyección de versión probada end-to-end**: build sin flags → `vestigio dev` · con
+    `-X ...mcp.Version=1.2.3` → `vestigio 1.2.3` · y el handshake MCP devuelve
+    `{'name':'vestigio','version':'1.2.3'}`. No alcanzaba con que compilara.
+  - **el loop de build del workflow corrido TAL CUAL localmente**: los 6 targets compilan desde
+    windows/amd64 sin toolchains — `windows/{amd64,arm64}`, `darwin/{amd64,arm64}`,
+    `linux/{amd64,arm64}`. ~7 MB con `-trimpath -s -w` (contra 9.9 MB sin flags).
+  - archivos `.tar.gz` generados y **verificados por contenido**: cada uno trae `LICENSE`,
+    `README.md` y el binario. `sha256sum -c checksums.txt` → 4/4 OK.
+  - assert de versión sobre el binario windows real → `vestigio 0.2.0`, **ASSERT OK**.
+  - `python -c yaml.safe_load` sobre el workflow → **VALID**, permisos `contents: write`, 7 pasos.
+  - `gh release create --help` consultado: `--notes-file` y `--generate-notes` SÍ combinan
+    ("Additional release notes can be prepended"). No se asumió.
+  - `go vet` 0 · `gofmt -l .` vacío · `go test ./...` 6/6 ok · `tools/list` 1.077 bytes sin moverse
+- **cost**: opus · ~14 tool calls
+- **gaps**:
+  - **EL WORKFLOW NUNCA CORRIÓ.** No se pusheó ningún tag: eso publica un release público y es
+    decisión del usuario. Lo verificado es el SCRIPT (localmente, tal cual) y el YAML (parseado).
+    Los pasos `gh release create` y `actions/checkout` no se ejercitaron.
+  - **La rama de `zip` no se probó**: `zip` no está en este Git Bash, así que los dos `.zip` de
+    Windows no se generaron. Está preinstalado en `ubuntu-latest`, pero eso es una creencia, no una
+    medición. Si falta, el job falla ruidosamente ANTES de publicar. Los 4 `.tar.gz` sí se generaron
+    y verificaron.
+  - **Ningún binario cross-compilado se EJECUTÓ**, salvo el de windows/amd64. Que `darwin/arm64`
+    compile no prueba que arranque — y el ledger ya tiene el caso del LC_UUID, donde binarios de
+    Go 1.22 compilaban y abortaban al arrancar en macOS. El CI corre tests en los 3 SO, lo que
+    cubre el riesgo indirectamente; los binarios del release no.
+  - **Sin firma ni notarización en macOS.** Documentado el `xattr -d com.apple.quarantine`. Firmar
+    pide cuenta de Apple Developer paga; no se hizo y no se disimuló.
+  - **Un primer tag va a publicar como `latest`**. Sin `--prerelease` ni política de versionado
+    escrita en el repo. Conviene arrancar con `v0.2.0-rc.1` para probar el pipeline sin marcar
+    latest, pero eso es decisión del usuario.
+  - `windows/386` y `linux/arm` (32 bits) quedaron afuera sin discusión.
+  - Este recibo va sobre `feat/release-binaries`, rama sacada de `main`. El recibo de la guía de
+    migración vive en la rama del PR #10 y no está acá — los dos ledgers se unifican al mergear.
+  - Solo windows/amd64 local. Sin mergear.
