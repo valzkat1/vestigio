@@ -697,3 +697,49 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
   - **La configuración de remotos quedó como estaba.** Renombrarlos es decisión del usuario, pero
     mientras `origin` sea el fork, cada `git push` sin argumentos va a rebotar.
   - PR #9 **abierto, no mergeado**. Verde en CI no es lo mismo que leído.
+
+## RECEIPT · Guía de migración desde Engram + corrección del mapeo de kinds
+- **when**: 2026-08-13T00:00Z
+- **intent**: el usuario preguntó si convenía sacar Engram del README ahora que no está en su
+  `~/.codex`. No: en el README Engram cumple dos papeles vivos — es la MEDICIÓN que justifica el
+  proyecto (8.835 → 1.077 bytes) y es un comando que el binario sigue exponiendo. Lo que sí
+  faltaba era el conocimiento de la migración de HOY, que vivía solo en este ledger.
+- **changed** (commit `1b0127b`):
+  - `docs/migrating-from-engram.md` (new, ~200 líneas) — las dos mitades: los datos (importador) y
+    la capa de instrucciones, que es la grande. Mapa de capacidades, conceptos sin contraparte,
+    las tres trampas, procedimiento y verificación.
+  - `README.md` (+3) · `docs/cli.md` (+4) — enlaces desde la sección de Engram y desde `import`.
+- **CORRECCIÓN DE UN RECIBO ANTERIOR**: el recibo "M1 Codex" de esta misma sesión afirma
+  `discovery→pattern` y `config→reference`. **Las dos son falsas.** `kindMap` en
+  `internal/importer/engram.go:55` dice `discovery→reference` y `config→constraint`, y mapea DIEZ
+  tipos, no siete. El error salió de escribir el recibo contra el archivo de instrucciones de
+  Engram en vez de contra el código del importador. La tabla del doc nuevo está transcripta del
+  código y lo dice explícitamente. Memoria #236 reemplazada por #242 con el mapeo correcto.
+- **HALLAZGO al leer el código**: `canonicalProject()` (engram.go:156) YA resuelve `scope: personal`
+  — manda esas observaciones a un proyecto llamado `personal`. Recibos anteriores decían que
+  `scope: personal` "no tiene destino"; es impreciso. Lo que no existe es scope GLOBAL en el
+  protocolo vivo: los datos llegan, pero nada los recupera desde otro proyecto y un agente no puede
+  escribir ahí. El doc lo dice con esa precisión.
+- **ran**:
+  - `go build ./...` → **exit 0** · `go vet ./...` → **exit 0** · `go test ./...` → **6/6 ok**
+    (cacheado — ningún archivo Go tocado en este commit)
+  - verificador de links Y ANCLAS sobre 7 archivos → **0 problemas**, incluidas
+    `cli.md#vestigio-import` y `codex.md#project-detection--read-this-one`
+  - `kindMap` extraído del código y contrastado línea por línea contra la tabla del doc → **10/10
+    coinciden**
+- **cost**: opus · ~10 tool calls
+- **gaps**:
+  - **Ninguna instrucción del doc se ejecutó en este turno.** El comando `rg` del barrido, el
+    procedimiento de 9 pasos y los comandos de verificación están escritos desde la migración real
+    de hoy, pero **no se re-corrieron** para este recibo. Es documentación de una corrida pasada.
+  - **Los números citados vienen de UNA sola migración**: 225 hits / 21 archivos, mediana de 1.574
+    chars, 13 memorias sobre el budget. Son de este corpus, no una estadística. El doc los presenta
+    como "la migración desde la que se escribió esto", no como norma.
+  - **`vestigio import` no se corrió de punta a punta acá.** La descripción del importador sale de
+    leer `engram.go` completo más el recibo de la sesión donde sí se corrió (179 memorias). Los
+    ejemplos de salida NO son capturados en este turno.
+  - **No hay test que ate la tabla del doc a `kindMap`.** Se verificó a mano una vez; si alguien
+    edita el mapa, la doc se desincroniza en silencio. Es el mismo modo de falla que este recibo
+    corrige — anotado, no resuelto.
+  - El doc asume `rg` instalado en el barrido. Sin alternativa para quien no lo tenga.
+  - Sin pushear al PR todavía.
