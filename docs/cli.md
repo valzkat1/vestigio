@@ -61,7 +61,8 @@ project is built against, so validation is shared by every command rather than w
 | Variable | Default | Meaning |
 |---|---|---|
 | `VESTIGIO_DB` | `~/.vestigio/vestigio.db` | Database path. Falls back to `./vestigio.db` if the home directory cannot be resolved. |
-| `VESTIGIO_PROJECT` | — | Override project detection entirely. |
+| `VESTIGIO_PROJECT` | — | **Override** detection entirely. Always this project. |
+| `VESTIGIO_DEFAULT_PROJECT` | — | **Default** used only when no git remote is found, instead of guessing from the directory name. |
 
 The parent directory of `VESTIGIO_DB` is created on open, so pointing it at a fresh path just works.
 
@@ -69,17 +70,38 @@ The parent directory of `VESTIGIO_DB` is created on open, so pointing it at a fr
 
 Memories are scoped to a project, resolved in this order:
 
-1. `VESTIGIO_PROJECT`, if set.
-2. `git config --get remote.origin.url` — the remote is stripped of a trailing `.git` and `/`, cut
+1. `--project=NAME`, if passed.
+2. `VESTIGIO_PROJECT`, if set.
+3. `git config --get remote.origin.url` — the remote is stripped of a trailing `.git` and `/`, cut
    at the last `/` or `:`, and lowercased. `git@github.com:valzkat1/AlCubo.git` → `alcubo`.
-3. The current directory's base name, lowercased.
-4. `default`.
+4. `VESTIGIO_DEFAULT_PROJECT`, if set.
+5. The current directory's base name, lowercased.
+6. `default`.
 
 The remote comes before the directory name so the same repository resolves identically from every
 clone path. That ordering has a sharp edge worth knowing about: **adding a remote to a repository
 changes the source of the answer**, and if the remote's repo name differs from the directory name,
 every memory filed under the old key goes quiet. Nothing is lost, but nothing is found either, and
 an empty `recall` reads exactly like data loss.
+
+### Override or default — they are not the same tool
+
+The two environment variables sit on opposite sides of detection on purpose:
+
+- `VESTIGIO_PROJECT` **beats** the remote. It answers "always use this."
+- `VESTIGIO_DEFAULT_PROJECT` **loses** to the remote. It answers "use this when there is nothing
+  true to detect."
+
+The distinction matters most in a config you use from many directories — an MCP client launched
+from anywhere, a shell profile. Setting the override there pins every repository to one project
+and quietly destroys per-repository scoping. Setting the default leaves repositories alone and
+only replaces step 5.
+
+Step 5 is the one worth being suspicious of. It always returns something, it is never loudly
+wrong, and it is right only when the directory happens to be named after the work. A client that
+launches vestigio from a scratch directory gets a project named after that folder — and if the
+folder name varies, so does the project, which is persistent memory that resets without ever
+looking broken.
 
 Two things guard against it. The resolved name is printed to stderr on every `mcp` startup, and
 `vestigio projects` lists every key that exists in the database. If recall goes empty, compare them
@@ -100,7 +122,8 @@ vestigio mcp [--project=NAME]
 
 Starts the MCP server, speaking JSON-RPC over stdin/stdout. Protocol version `2024-11-05`.
 
-`--project=NAME` pins the project, bypassing detection. Equivalent to `VESTIGIO_PROJECT`.
+`--project=NAME` pins the project, bypassing detection. It outranks `VESTIGIO_PROJECT`, so an
+explicit argument always beats an inherited environment.
 
 **stdout is reserved for JSON-RPC frames.** The startup banner — `vestigio 0.1.0 — project "alcubo"`
 — goes to stderr on purpose. Anything printed to stdout would corrupt the stream and the client

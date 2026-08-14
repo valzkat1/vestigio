@@ -259,6 +259,26 @@ Two consequences to be honest about:
   the working directory is Codex's choice. A wrong project returns empty and
   reads like data loss. Mitigated by printing the resolved project to stderr and
   by `VESTIGIO_PROJECT`; documented in `docs/codex.md`.
+
+  **This risk was not hypothetical — it fired within a day of the audit.** Codex
+  Desktop launches the server in `Documents/Codex/<date>/<name>`, which is not a
+  repository, so resolution fell to the directory-name guess and the project
+  became `ho`. With the date in the path it would have been a different project
+  every day: persistent memory silently resetting, nothing appearing broken.
+  Nothing was lost only because no write had happened yet.
+
+  The root cause was not the guess itself but a missing rung in the ladder: the
+  cascade held an override above detection and a guess below it, with no
+  *default* in between. `VESTIGIO_PROJECT` could rescue a client outside a
+  repository, but it outranks the remote, so setting it in a config shared across
+  directories destroys per-repository scoping everywhere else. Fixed by adding
+  `VESTIGIO_DEFAULT_PROJECT` below the remote and above the guess
+  (`cmd/vestigio/main.go`, tests in `cmd/vestigio/main_test.go`).
+
+  Worth carrying forward: a fallback that always answers and never fails is not
+  a safety net, it is an unreported error. This one had been documented, printed
+  to stderr, and called out in this very section — and it still cost a debugging
+  session, because everything it produces looks exactly like a normal answer.
 - **Pinned protocol version.** Legal today, a break the day a client drops
   `2024-11-05`. The harness is the tripwire.
 - **Recalled memories are untrusted input.** A memory can contain anything an

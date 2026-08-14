@@ -47,33 +47,68 @@ nothing to a running session.
 | Variable | Meaning |
 |---|---|
 | `VESTIGIO_DB` | Database path (default `~/.vestigio/vestigio.db`) |
-| `VESTIGIO_PROJECT` | Override project detection |
+| `VESTIGIO_PROJECT` | **Override** detection — always this project |
+| `VESTIGIO_DEFAULT_PROJECT` | **Default** used only when no git remote is found |
 
-Both can be set in the server block:
+They can be set in the server block:
 
 ```toml
 [mcp_servers.vestigio]
 command = "vestigio"
 args = ["mcp"]
-env = { VESTIGIO_PROJECT = "my-project" }
+env = { VESTIGIO_DEFAULT_PROJECT = "personal" }
 ```
+
+For a client config, `VESTIGIO_DEFAULT_PROJECT` is almost always the one you
+want. The next section is why.
 
 ## Project detection — read this one
 
 Memories are scoped to a project. vestigio resolves it in this order:
 
-1. `VESTIGIO_PROJECT`, if set
-2. `--project=NAME`, if passed
+1. `--project=NAME`, if passed
+2. `VESTIGIO_PROJECT`, if set
 3. The git remote name (`remote.origin.url`), so the same repository resolves
    identically from any clone path
-4. The current directory name, lowercased
+4. `VESTIGIO_DEFAULT_PROJECT`, if set
+5. The current directory name, lowercased
 
-**Codex launches the server as a subprocess, so step 3 and 4 depend on the
+**Codex launches the server as a subprocess, so steps 3 and 5 depend on the
 working directory Codex hands it — not on where you think you are.** If that
 resolves to the wrong project, every `recall` comes back empty, and an empty
 recall reads exactly like data loss.
 
-Two defences, both worth using:
+### Step 5 is the one that bites
+
+It always returns something. It is never loudly wrong. And it is right only when
+the directory happens to be named after the work.
+
+Codex Desktop does not launch you in your repository. It creates a scratch
+directory per session — `Documents/Codex/<date>/<name>` — and starts the server
+there. No git remote, so resolution falls to step 5 and the project becomes the
+folder name. Because the **date is in the path**, it becomes a *different*
+project tomorrow. Nothing errors. Nothing looks broken. Memory just never
+accumulates.
+
+### Set a default, not an override
+
+```toml
+[mcp_servers.vestigio]
+command = "vestigio"
+args = ["mcp"]
+env = { VESTIGIO_DEFAULT_PROJECT = "personal" }
+```
+
+`VESTIGIO_DEFAULT_PROJECT` sits *below* the git remote. Inside a repository, the
+remote still wins and you keep per-repository scoping. Outside one, you land in
+a project you chose instead of one invented from a folder name.
+
+`VESTIGIO_PROJECT` would sit *above* it. In a config that Codex loads from every
+directory, that pins your repositories to one project too — trading a scattered
+memory for a merged one. Reach for it only when you genuinely want one project
+regardless of location.
+
+### Verify it, do not assume it
 
 **Look at stderr on startup.** The resolved project is printed there on purpose:
 
@@ -81,21 +116,14 @@ Two defences, both worth using:
 vestigio 0.1.0 — project "vestigio"
 ```
 
-**Pin it when you care.** For a repository you work in constantly, set it
-explicitly rather than trusting detection:
-
-```toml
-env = { VESTIGIO_PROJECT = "my-project" }
-```
-
-Note that pinning in the global config pins it for *every* Codex session. If you
-work across many repositories, prefer detection and check the stderr line.
-
-To see what actually landed where:
+**Check where things actually landed:**
 
 ```bash
 vestigio projects
 ```
+
+A project named after a scratch folder in that list is this bug, already in
+progress.
 
 ## Using it
 
@@ -181,8 +209,10 @@ absolute path with escaped backslashes. Restart Codex after any config edit.
 
 **`recall` returns "no memories matched" for things you know you saved.**
 Almost always project detection. Run `vestigio projects` and check which project
-holds them, then pin `VESTIGIO_PROJECT`. This is the single most common failure
-and the reason the project name is printed on startup.
+holds them. If the list contains a name you never chose — a scratch folder, a
+date — that is step 5 guessing, and `VESTIGIO_DEFAULT_PROJECT` is the fix. This
+is the single most common failure and the reason the project name is printed on
+startup.
 
 **Memories saved from Codex are invisible in another client.**
 They share one database by default, so this is scope, not storage. Both clients
