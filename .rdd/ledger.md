@@ -655,3 +655,45 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
   - Probado solo sobre un documento de demo de 6 secciones. **Sin correr contra un corpus grande**
     ni contra los docs reales del repo.
   - Solo windows/amd64. Sin commitear.
+
+## RECEIPT · Documentación del repo alineada + PR #9
+- **when**: 2026-08-13T00:00Z
+- **intent**: `## Status` del README describía un esqueleto con "10/10 tests green" y listaba como
+  próximo el set de evaluación, que está en el repo hace una semana. `docs/cli.md` indexaba 9
+  comandos y el binario tiene 10.
+- **changed** (commit `5505114`):
+  - `README.md` (+43/-7) — Status reescrito con números medidos y el orden de trabajo que argumenta
+    la auditoría (scope global → packing → enchufar el scorer). La línea de compatibilidad ahora
+    distingue **Codex verificado en CI** del resto, que se espera sobre el mismo protocolo y no
+    tiene test. Esa frase sin respaldo fue lo que originó este milestone entero.
+  - `docs/cli.md` (+25) — `seed` en el índice de comandos + 3 recetas (bootstrap día cero, loop
+    sobre ADRs con `--split=1`, re-seed tras editar).
+  - `docs/codex-memory-audit.md` (+1) — fila M1a por `vestigio seed`.
+- **ran**:
+  - `go build ./...` → **exit 0**
+  - `go vet ./...` → **exit 0**
+  - `go test ./...` → **6/6 paquetes ok**
+  - verificación de links: script Python sobre 6 archivos → **0 links relativos muertos**,
+    ancla `#vestigio-seed` presente en `docs/cli.md:117`
+  - `8835/1077` recalculado → **8.2x**, que es lo que afirma el README
+  - `git push upstream add-codex-support` → ok. **`git push origin` había sido RECHAZADO**: ver gaps.
+  - `gh pr create` → **PR #9**, y `gh pr view 9` → **8/8 checks SUCCESS**, `MERGEABLE / CLEAN`
+- **cost**: opus · ~12 tool calls
+- **gaps**:
+  - **Los tres comandos de evidencia no prueban nada sobre este cambio.** No se tocó una línea de
+    Go; corren verdes porque el árbol ya estaba verde. Se corrieron igual porque el recibo de
+    `docs/cli.md` de la sesión anterior anotó como gap justamente no haberlos corrido.
+  - **Ningún ejemplo del README ni de `docs/cli.md` se ejecutó en este turno.** Las recetas de
+    `seed` se escribieron a partir del comportamiento verificado en el recibo anterior; el loop
+    `for f in adr/*.md` **nunca se corrió** — no hay directorio de ADRs contra el cual probarlo.
+  - **Los links relativos están verificados; las anclas dentro de archivos, no.** Solo se chequeó
+    `#vestigio-seed`. El resto del índice de `docs/cli.md` se asume correcto.
+  - **TRAMPA DE LAS DOS CUENTAS, pagada de nuevo**: `git push origin` → `remote rejected —
+    permission denied`. `origin` es `victorramirezbvc/vestigio`, un **fork con permiso READ**;
+    el repo real es `upstream` = `valzkat1/vestigio`, donde la cuenta autenticada (`valzkat1`)
+    tiene ADMIN. Señal para detectarlo sin probar el push: `go.mod` y los badges dicen `valzkat1`
+    y los 9 PRs viven ahí. Se buscó en memoria ANTES de investigar y no estaba en el scope de este
+    proyecto — por eso se pagó otra vez. Guardado ahora como memoria #241.
+  - **La configuración de remotos quedó como estaba.** Renombrarlos es decisión del usuario, pero
+    mientras `origin` sea el fork, cada `git push` sin argumentos va a rebotar.
+  - PR #9 **abierto, no mergeado**. Verde en CI no es lo mismo que leído.
