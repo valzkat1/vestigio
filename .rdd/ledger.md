@@ -697,3 +697,58 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
   - **La configuración de remotos quedó como estaba.** Renombrarlos es decisión del usuario, pero
     mientras `origin` sea el fork, cada `git push` sin argumentos va a rebotar.
   - PR #9 **abierto, no mergeado**. Verde en CI no es lo mismo que leído.
+
+## RECEIPT · `VESTIGIO_DEFAULT_PROJECT` — el escalón que le faltaba a la detección
+- **when**: 2026-08-14T00:00Z
+- **intent**: `recall` volvía vacío bajo Codex Desktop. No era retrieval: era scoping. Codex Desktop
+  arranca el server en `Documents/Codex/<fecha>/<nombre>`, que no es repo git, así que la resolución
+  caía al último escalón — nombre de carpeta — y el proyecto era `ho`. Con la **fecha en el path**,
+  un proyecto distinto cada día.
+- **changed** (commit `470b2b4`):
+  - `cmd/vestigio/main.go` (+37/-2) — `VESTIGIO_DEFAULT_PROJECT` consultado **debajo** del remote git
+    y **encima** de la adivinanza por nombre de carpeta. Comentario extenso sobre por qué un
+    *override* y un *default* no son la misma herramienta. Bloque `Environment:` del `usage()`
+    reescrito con la cascada completa.
+  - `cmd/vestigio/main_test.go` (+99/-1) — 4 tests + helpers `scratchDir` y `repoDir`.
+  - `docs/codex.md` (+50/-20) — cascada corregida, sección nueva "Step 5 is the one that bites",
+    "Set a default, not an override", troubleshooting actualizado.
+  - `docs/cli.md` (+29/-6) — tabla de env, cascada de 6 pasos con `--project` incluido, sección
+    "Override or default — they are not the same tool", y `--project` ya no se describe como
+    "equivalente a `VESTIGIO_PROJECT`" sino como su superior.
+  - `README.md` (+4/-1) — tabla de env y el párrafo del fallback.
+  - `docs/codex-memory-audit.md` (+20) — el riesgo "Silent project misdetection" ya no es
+    hipotético; se registra que **se cumplió al día siguiente de escribirlo**.
+- **ran**:
+  - `gofmt -l .` → **vacío**
+  - `go vet ./...` → **exit 0**
+  - `go test ./... -count=1` → **6/6 paquetes ok**
+  - `go test ./cmd/vestigio/ -run 'TestProject|TestDefaultProject|TestDirectoryName|TestRepoFromRemote' -v`
+    → **5 PASS**
+  - `go build ./...` → **exit 0**
+  - `vestigio list` desde `C:\Users\victo\Documents\Codex\2026-08-14\ho` (binario **viejo**,
+    pre-fix) → `0 memories — ho`. Es la reproducción del bug con el binario instalado.
+  - `vestigio projects` → 240 memorias en 8 proyectos, **ningún `ho`** → cero escrituras perdidas.
+  - `Get-CimInstance Win32_Process` → 7 `vestigio.exe`; **6 hijos de `claude`, 1 de `codex`**.
+    Carpeta `ho` creada `00:26:17`, PID 27740 spawneado `00:26:18`.
+  - `gh pr create` → **PR #12**; `gh pr checks 12 --watch` → **8/8 pass** (ubuntu/macos/windows,
+    race, lint, analyze, CodeQL, govulncheck)
+- **cost**: opus · ~20 tool calls
+- **gaps**:
+  - **El fix nunca se ejecutó como binario.** `go build ./...` compila pero no corre nada; no se
+    hizo `go install` ni se probó `VESTIGIO_DEFAULT_PROJECT` desde el scratch dir real. La prueba
+    es `TestDefaultProjectCatchesTheScratchDirectory`, que reproduce `ho` y luego exige `personal`.
+    Es mejor evidencia que una prueba a mano porque corre en CI para siempre — pero **no es lo
+    mismo que haberlo visto funcionar end-to-end en Codex**.
+  - **Dije en el chat "no compilé nada" y después corrí `go build ./...`** como comando de
+    evidencia de RDD. La afirmación quedó desactualizada dentro del mismo turno.
+  - **`~/.codex/config.toml` NO fue tocado.** El bug del usuario sigue vivo hasta que se mergee
+    #12, se reinstale el binario, se agregue `env = { VESTIGIO_DEFAULT_PROJECT = ... }` y se
+    reinicie Codex. Cuatro pasos, ninguno hecho.
+  - **La corrección de precedencia en los docs se verificó leyendo los tres call sites, no con un
+    test.** Nada impide que vuelva a divergir. Un test que afirme "flag gana a env" sería barato y
+    no está escrito.
+  - **`--project` vs `VESTIGIO_PROJECT` no tiene test tampoco.** `TestProjectOverrideBeatsDetection`
+    cubre env vs remote, no flag vs env.
+  - **Los 7 procesos `vestigio.exe` huérfanos siguen vivos**, algunos del 12-Ago. No es bug de
+    vestigio (muere al cerrarse stdin), pero nadie los está cosechando.
+  - **PRs #10, #11 y #12 abiertos, ninguno mergeado.** Verde en CI no es lo mismo que leído.

@@ -69,9 +69,12 @@ detection and troubleshooting in full: **[docs/codex.md](docs/codex.md)**.
 | Variable | Meaning |
 |---|---|
 | `VESTIGIO_DB` | Database path (default `~/.vestigio/vestigio.db`) |
-| `VESTIGIO_PROJECT` | Override project detection |
+| `VESTIGIO_PROJECT` | **Override** detection — always this project |
+| `VESTIGIO_DEFAULT_PROJECT` | **Default** used only when no git remote is found |
 
 Projects are detected from the git remote, falling back to the directory name. The resolved name is printed to stderr on startup — silent misdetection makes an empty recall look like data loss.
+
+That fallback is a guess, and a client launched outside any repository — Codex Desktop uses a per-session scratch directory — gets a project named after whatever folder it happened to start in. Set `VESTIGIO_DEFAULT_PROJECT` in a client config: it sits *below* the git remote, so repositories keep their own scoping and everything else lands where you chose. `VESTIGIO_PROJECT` sits above it and would pin your repositories too.
 
 ## CLI
 

@@ -169,6 +169,29 @@ func runImport(args []string) int {
 // M0 gotcha, learned the hard way: when detection silently picks the wrong
 // project, every recall returns empty and it reads like data loss. Whatever this
 // resolves to is printed on startup for exactly that reason.
+//
+// The two environment variables are deliberately not the same kind of thing, and
+// the difference is the whole reason the second one exists:
+//
+//	VESTIGIO_PROJECT          an OVERRIDE — beats detection, decides on its own
+//	VESTIGIO_DEFAULT_PROJECT  a DEFAULT   — loses to detection, catches its miss
+//
+// An override answers "always use this". A default answers "use this when there
+// is nothing true to detect". Only the first existed, which forced an unpleasant
+// choice on anyone running one config across many directories: pin it and lose
+// per-repository scoping everywhere, or leave it and accept whatever the last
+// line of this function invents.
+//
+// That last line is the real hazard. It always returns something, it is never
+// wrong loudly, and it is right only when the directory happens to be named
+// after the work. A client that launches this server from a scratch directory —
+// Codex Desktop uses Documents/Codex/<date>/<name> — gets a project named after
+// that folder, and because the DATE is in the path it gets a DIFFERENT one
+// tomorrow. Persistent memory that quietly resets every day is worse than memory
+// that fails, because nothing about it looks broken.
+//
+// So the default sits below the remote and above the guess: a repository still
+// wins on its own name, and everywhere else lands somewhere you chose.
 func detectProject() string {
 	if p := os.Getenv("VESTIGIO_PROJECT"); p != "" {
 		return p
@@ -177,6 +200,9 @@ func detectProject() string {
 		if name := repoFromRemote(strings.TrimSpace(string(out))); name != "" {
 			return name
 		}
+	}
+	if p := os.Getenv("VESTIGIO_DEFAULT_PROJECT"); p != "" {
+		return p
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		return strings.ToLower(filepath.Base(cwd))
@@ -255,7 +281,16 @@ Ids are global, not project-scoped — running from the wrong directory will
 never hide a row that exists.
 
 Environment:
-  VESTIGIO_DB        Database path (default ~/.vestigio/vestigio.db)
-  VESTIGIO_PROJECT   Override project detection
+  VESTIGIO_DB                Database path (default ~/.vestigio/vestigio.db)
+  VESTIGIO_PROJECT           Override detection — always this project
+  VESTIGIO_DEFAULT_PROJECT   Used only when no git remote is found, instead of
+                             guessing from the directory name
+
+Project resolution, highest wins:
+  --project=NAME  >  VESTIGIO_PROJECT  >  git remote  >  VESTIGIO_DEFAULT_PROJECT
+  >  current directory name
+
+Set VESTIGIO_DEFAULT_PROJECT, not VESTIGIO_PROJECT, in an MCP client config you
+use from many directories: the override would win inside your repositories too.
 `)
 }

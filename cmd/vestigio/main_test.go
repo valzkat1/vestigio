@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
 
 // The regression these tests exist for: "--map old=new" once parsed as a bare
 // "--map" that matched nothing, followed by an "old=new" that looked like a
@@ -74,6 +79,99 @@ func TestParseImportArgsErrors(t *testing.T) {
 				t.Errorf("parseImportArgs(%q) = nil error, want an error", tt.args)
 			}
 		})
+	}
+}
+
+// scratchDir moves the test into an empty directory with a name we choose, and
+// verifies git finds no remote from there. The verification is the point: every
+// test below distinguishes "detection found nothing" from "detection found
+// something", so a temp directory that turned out to sit inside a repository
+// would not fail these tests, it would make them lie.
+func scratchDir(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Chdir(dir)
+	if out, err := exec.Command("git", "config", "--get", "remote.origin.url").Output(); err == nil && len(out) > 0 {
+		t.Skipf("temp dir sits inside a git repository with remote %q", out)
+	}
+	return dir
+}
+
+// repoDir builds a real repository with a real remote. Nothing is committed —
+// `git config --get remote.origin.url` only reads config, and a fixture that
+// does the least is a fixture that keeps passing.
+func repoDir(t *testing.T, remote string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir := t.TempDir()
+	t.Chdir(dir)
+	for _, args := range [][]string{
+		{"init", "--quiet"},
+		{"remote", "add", "origin", remote},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return dir
+}
+
+func TestProjectOverrideBeatsDetection(t *testing.T) {
+	repoDir(t, "https://github.com/valzkat1/vestigio.git")
+	t.Setenv("VESTIGIO_PROJECT", "pinned")
+	t.Setenv("VESTIGIO_DEFAULT_PROJECT", "fallback")
+
+	if got := detectProject(); got != "pinned" {
+		t.Errorf("detectProject() = %q, want %q — VESTIGIO_PROJECT is an override and must win", got, "pinned")
+	}
+}
+
+// The reason VESTIGIO_DEFAULT_PROJECT exists at all. VESTIGIO_PROJECT could
+// already rescue a client launched outside any repository, but it wins
+// everywhere, so setting it in a config shared across directories silently
+// destroys per-repository scoping. A default has to LOSE here, or it is just a
+// second override with a longer name.
+func TestDefaultProjectLosesToTheGitRemote(t *testing.T) {
+	repoDir(t, "git@github.com:valzkat1/AlCubo.git")
+	t.Setenv("VESTIGIO_PROJECT", "")
+	t.Setenv("VESTIGIO_DEFAULT_PROJECT", "personal")
+
+	if got := detectProject(); got != "alcubo" {
+		t.Errorf("detectProject() = %q, want %q — a default must never outrank a detected remote", got, "alcubo")
+	}
+}
+
+// The Codex Desktop bug, reproduced. That client launches the server in
+// Documents/Codex/<date>/<name>, which is not a repository, so the directory
+// name became the project — and since the date is in the path, a different
+// project every day.
+func TestDefaultProjectCatchesTheScratchDirectory(t *testing.T) {
+	scratchDir(t, "ho")
+	t.Setenv("VESTIGIO_PROJECT", "")
+
+	t.Setenv("VESTIGIO_DEFAULT_PROJECT", "")
+	if got := detectProject(); got != "ho" {
+		t.Fatalf("detectProject() = %q, want %q — the fixture is not reproducing the bug it exists for", got, "ho")
+	}
+
+	t.Setenv("VESTIGIO_DEFAULT_PROJECT", "personal")
+	if got := detectProject(); got != "personal" {
+		t.Errorf("detectProject() = %q, want %q — the default must replace the directory-name guess", got, "personal")
+	}
+}
+
+func TestDirectoryNameIsTheLastResort(t *testing.T) {
+	scratchDir(t, "MyScratchDir")
+	t.Setenv("VESTIGIO_PROJECT", "")
+	t.Setenv("VESTIGIO_DEFAULT_PROJECT", "")
+
+	if got := detectProject(); got != "myscratchdir" {
+		t.Errorf("detectProject() = %q, want %q", got, "myscratchdir")
 	}
 }
 
