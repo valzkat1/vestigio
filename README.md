@@ -27,6 +27,9 @@ So we measured it. Engram v1.11.0, `--tools=agent`, read straight off the wire w
 
 Two of Engram's tools accounted for **48% of its whole profile**, and **51% of the cost was prose in descriptions**, not JSON Schema.
 
+Coming from Engram? `vestigio import` moves the data, but the data is the small half — see
+**[docs/migrating-from-engram.md](docs/migrating-from-engram.md)** for the part that breaks quietly.
+
 Token figures are estimates at 4 chars/token; character counts are exact.
 
 ## The three rules
