@@ -487,3 +487,213 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
     su contenido está en main vía el squash — pero se deja hasta que el usuario confirme.
   - El squash colapsó el commit en uno solo. El mensaje se preservó entero, pero el historial
     de main ya no muestra que hubo un rebase de por medio. Queda solo acá.
+
+## RECEIPT · M1 Codex — auditoría, harness de compatibilidad y migración de ~/.codex
+- **when**: 2026-08-13T00:00Z
+- **intent**: el spec pedía "evolucionar vestigio para Codex", asumiendo (§4) que la compatibilidad
+  era un bloque `[mcp_servers.vestigio]` en TOML. La auditoría previa a tocar código encontró otra
+  cosa.
+- **HALLAZGO 1 — el README mentía por omisión**: prometía compatibilidad con Codex desde el primer
+  commit y **nunca se había probado**. Misma clase exacta que el bug de macOS del `go.mod`: una
+  promesa del README que había dejado de ser cierta en silencio, y que solo apareció cuando CI
+  finalmente corrió la matriz. Ahora hay harness.
+- **HALLAZGO 2 — la caja "Retrieval Engine" no existe**: `internal/retrieve` (Scorer, Fuse, RRF)
+  tiene **cero importadores** fuera de su propio test. El ranking real es `ORDER BY bm25()` en
+  `store.search:173`, lo hace SQLite. El diagrama objetivo del spec dibuja una capa que no está
+  conectada. Cualquier trabajo de scoring (§8) empieza por enchufarla, no por diseñarla.
+- **HALLAZGO 3 — la superficie de Codex era la capa de instrucciones**: barrido de `~/.codex`
+  → **225 referencias a Engram en 21 archivos**. El `[mcp_servers]` eran 4 de esas 225 (1,8%).
+  Tres bloques marcados MANDATORY con `mem_search` **incondicional**: SDD Init Guard, Strict TDD
+  Forwarding y Apply-Progress Continuity. Con Engram apagado no fallaban ruidosamente: fallaban
+  en silencio hacia Standard Mode.
+- **changed** (repo):
+  - `internal/mcp/codex_test.go` (new) — 7 tests, 9 con subtests. Reusa los helpers de
+    `server_test.go` (`session`, `only`, `textOf`, `rpc`, `call`) en vez de duplicar harness.
+  - `docs/codex-memory-audit.md` (new) — auditoría completa contra código leído.
+  - `docs/codex.md` (new) — instalación, config, project detection, troubleshooting, AGENTS.md vs
+    vestigio, nota de seguridad (memoria recuperada = contexto NO confiable).
+  - **cero cambios en código de producción.** `server.go`, `store.go`, `retrieve.go` intactos.
+- **changed** (`~/.codex`, migración in-place aprobada por el usuario):
+  - `config.toml` — `[mcp_servers.engram]` → `[mcp_servers.vestigio]`; instructions y compact
+    prompt repuntados.
+  - `vestigio-instructions.md`, `vestigio-compact-prompt.md` (new) · los dos `engram-*.md` borrados
+  - `skills/_shared/engram-convention.md` **borrado** · `persistence-contract.md` y
+    `sdd-phase-common.md` reescritos preservando las cabeceras Section A/B/C/D
+  - `agents.md` + las 8 skills `sdd-*` + `skill-registry`, `skill-resolver`, `judgment-day`,
+    `strict-tdd.md`
+- **decisiones de traducción** (no fue find-and-replace):
+  - `mem_get_observation`, `mem_context`, `mem_suggest_topic_key`, `mem_update`,
+    `mem_capture_passive` → **borrados**, no renombrados. `recall` devuelve texto completo en un
+    round trip: el segundo paso no es un rename, es un paso muerto.
+  - `apply-progress` **no tiene contraparte en openspec**. El progreso SON las marcas `[x]` de
+    `tasks.md`. Portar el sustantivo habría inventado un archivo que nadie lee.
+  - Modos `engram` e `hybrid` **eliminados**, no gateados. Un decommission que gatea a sus
+    dependientes no está terminado, está diferido.
+  - Escrituras a memoria **centralizadas en el orquestador**: vestigio scopea por cwd, así que un
+    sub-agente en un worktree escribiría a un store inalcanzable.
+  - `kind`: 7 valores → 5 (`architecture`→`decision`, `discovery`→`pattern`, `config`→`reference`,
+    `preference`→`constraint`).
+- **ran**:
+  - `go test ./internal/mcp/ -run TestCodex -v` → **7/7 PASS**. Handshake medido contra las tres
+    revisiones que Codex ha embarcado: pidiendo `2025-03-26` y `2025-06-18`, el server contesta
+    **`2024-11-05`** en los dos casos.
+  - **binario real** (`~/go/bin/vestigio.exe`, el que Codex va a lanzar), pipe de 5 frames Codex:
+    initialize → ok · notification → sin respuesta · tools/list → 3 tools · `resources/list` →
+    `-32601` y el transporte SIGUE VIVO · recall → ok · **exit 0** · stdout JSON-RPC puro, banner
+    en stderr.
+  - `go test ./... -count=1` → 5/5 paquetes ok · `go vet ./...` → 0 · `gofmt -l .` → vacío
+  - `tools/list` = **1.077 bytes** (~269 tok), 423 bajo el presupuesto de 1.500. Sin moverse:
+    los docs nuevos no tocan el schema.
+  - conteo de tests: **143 → 153** corridas de nivel superior.
+  - re-sweep de `~/.codex`: **225 → 3**, y los 3 son las frases que EXPLICAN que vestigio no tiene
+    `topic_key`. Predicción antes de editar: "solo hits inertes". Se cumplió.
+  - `config.toml` parseado con `tomllib` → **VALID**, un solo server (`vestigio`), y los 3 archivos
+    referenciados existen.
+- **cost**: opus · ~55 tool calls
+- **gaps**:
+  - **ERROR MÍO, corregido después y no antes**: borré `skills/_shared/engram-convention.md`
+    **sin chequear primero quién lo referenciaba** — que es el paso 9 explícito del propio skill de
+    decommission. Verifiqué después: 3 referencias (`agents.md:356`, `persistence-contract.md:48`,
+    `sdd-init:35/258`), las tres en archivos que iba a reescribir igual. Salió bien por suerte, no
+    por método. La regla existe porque la próxima vez puede no salir.
+  - **Codex CLI NO está instalado en esta máquina.** La compatibilidad está probada a nivel
+    PROTOCOLO (harness + binario real), no contra un cliente Codex corriendo. El harness reproduce
+    lo que Codex envía **según la spec MCP**; si Codex se desvía de la spec, esto no lo caza.
+  - **La capa de instrucciones migrada no fue ejercitada por ninguna sesión real de Codex.** Está
+    validada como TOML y como texto coherente; nadie la corrió. Es el gap más grande del recibo.
+  - `protocolVersion` sigue **pineado en `2024-11-05`**, deliberadamente. Es legal por spec (el
+    server ofrece una versión que soporta) y el harness prueba que hoy anda. Cambiar comportamiento
+    que funciona sin evidencia de rotura es cómo se introducen regresiones. El test es el fusible.
+  - `vestigio.exe` instalado es del **6-Ago**, anterior a los fixes del parser de argumentos en
+    main. Para `vestigio mcp` sin flags es equivalente, pero está viejo: conviene `go install` para
+    refrescarlo.
+  - **`scope: personal` se perdió, no se resolvió.** Engram lo tenía; vestigio filtra por proyecto
+    en SQL sin fallback. Se eliminó del protocolo portado en vez de fingirlo. Queda documentado en
+    el audit como el argumento concreto a favor del §6 — es la única capacidad que la migración no
+    pudo cruzar honestamente.
+  - `sdd-onboard` y `judgment-day` tenían 1 hit cada uno y se editaron por línea; **no se leyeron
+    completos**. Si tienen acoplamiento a Engram fuera de esa línea, no lo vi.
+  - Backup completo en `C:\Users\victo\.codex-backup-20260813` (27 archivos). `~/.codex` no es
+    repo git — no hay undo salvo ese directorio. Hay que borrarlo a mano cuando el usuario confirme.
+  - **Nada toma efecto hasta reiniciar Codex.** Los MCP servers se lanzan al arranque.
+  - El motor de retrieval no se tocó: recall@1 sigue en 10/15 y recall@3 en 12/15. Este recibo no
+    prueba ninguna mejora de calidad de búsqueda, y no pretende hacerlo.
+  - Sin commitear.
+
+## RECEIPT · `vestigio seed` — sembrar la memoria desde documentos propios
+- **when**: 2026-08-13T00:00Z
+- **intent**: dar al usuario una forma de arrancar con memoria: aportar sus especificaciones
+  iniciales en `.md` o `.txt` y que se conviertan en memorias.
+- **el problema real no era leer archivos, era CORTAR**: una memoria que necesita más de unos
+  cientos de tokens son dos memorias (`store.go:16`). Un README pegado entero es una fila que
+  ningún `budget_tokens` sensato puede devolver — el import de Engram ya dejó 13 memorias que
+  solas revientan un budget de 800. Todo el diseño es el corte.
+- **decisión de superficie**: comando CLI, **cero tools MCP nuevas**. Un agente podría leer un `.md`
+  y emitir `remember` N veces, y es estrictamente peor: paga miles de tokens leyendo, no es
+  idempotente, y ocurre después de que la sesión ya arrancó. Sembrar es una operación de día cero.
+  `tools/list` quedó en **1.077 bytes, sin moverse un byte**.
+- **changed**:
+  - `internal/seed/seed.go` (new) — parser puro: sin store, sin filesystem, sin red. Árbol de
+    secciones, cascada de kind, auto-split de secciones grandes.
+  - `internal/seed/seed_test.go` (new) — 18 tests
+  - `cmd/vestigio/seed.go` (new) — comando con `--project/--kind/--split/--max-tokens/--dry-run`,
+    sobre el `argSpec` compartido que ya rechaza lo que no reconoce
+  - `cmd/vestigio/seed_test.go` (new) — 8 tests + 10 casos de rechazo de flags
+  - `cmd/vestigio/main.go` — registro del subcomando + `usage()`
+  - `docs/cli.md`, `README.md` — sección `seed`, con la tabla "qué sembrar / qué dejar en AGENTS.md"
+- **DOS BUGS ENCONTRADOS, los dos por CORRER EL BINARIO, no por leer el código**:
+  1. **Pérdida silenciosa de contenido.** `collect` recursaba a través de los nodos por encima del
+     nivel de corte y nunca miraba su prosa: un párrafo bajo `# Decisiones` **desaparecía sin
+     aviso**. Es exactamente la falla contra la que está construido este proyecto. Apareció de
+     rebote — el test de auto-split se auto-detectó a un nivel más profundo del que yo quería y el
+     lead faltante saltó en el diff de títulos. Fix: `emitLead`. Tests de regresión:
+     `TestProseAboveTheCutIsNotDropped` y `TestPreambleBeforeAnyHeadingIsKept`.
+  2. **El heurístico cortaba en la capa de etiquetas.** Un doc organizado como `# Decisiones` /
+     `# Restricciones`, con varios `##` colgando de cada uno, repite en nivel 1 → la regla ingenua
+     ("nivel más shallow que se repite") cortaba ahí y producía **2 memorias enormes con nombre de
+     categoría en vez de 5 hechos**. Un encabezado que ES un nombre de kind existe para CLASIFICAR
+     a sus hijos — que es justo para lo que lo lee la cascada. Fix: saltear niveles donde TODOS los
+     encabezados nombran un kind.
+     - Sub-bug del mismo: `# Restricciones` no matcheaba. Los plurales españoles de `-ión` pierden
+       la tilde (`restricción` → `restricciones`), y la tabla estaba cabeceada con la forma
+       acentuada. Fix: normalizar acentos y cabecear la tabla sin tilde.
+- **ran**:
+  - `go test ./... -cover -count=1` → **6/6 paquetes ok**. `internal/seed` **90.7%**,
+    `cmd/vestigio` **64.8% → 70.2%**
+  - conteo de tests: **153 → 184** corridas de nivel superior
+  - `go vet ./...` → 0 · `gofmt -l .` → vacío · `go mod tidy` → sin drift
+  - **`tools/list` = 1.077 bytes**, idéntico. El comando no le cuesta contexto a ningún agente.
+  - trinquete de recall intacto: **recall@1 10/15 · recall@3 12/15**
+  - **binario compilado, documento real de 6 secciones** (bilingüe, con fence, con dos categorías):
+    dry-run → `cut at H2`, 6 memorias, kinds `decision/decision/decision/bugfix/constraint/constraint`
+    · real → 6 created · re-seed → **6 merged, 0 created** (idempotente)
+    · el `# esto NO es un encabezado` dentro del fence quedó como contenido, no como sección
+  - **seed → recall end-to-end por MCP**, con paráfrasis que no repiten el título:
+    "por que descartamos node" → #2 Elegimos Go **rank 1** ·
+    "puedo tocar la base con un GUI?" → #5 No editar la base **rank 1** ·
+    "el binario no arrancaba en mac" → el bugfix de macOS en rank 2
+- **cost**: opus · ~30 tool calls
+- **gaps**:
+  - **El caso de un registro por archivo sigue mal y es deliberado.** `# ADR-001` con `## Context` y
+    `## Decision` debajo corta en H2 y parte un ADR en pedazos. Nada en el texto lo distingue de una
+    lista de dos hechos. `--split=1` es la respuesta y `--dry-run` es cómo se ve antes. Documentado
+    en `docs/cli.md` y en el comentario de `detectLevel`, no resuelto.
+  - **El auto-split inventa títulos** (`Padre — Hijo`). Fue una decisión explícita del usuario tras
+    plantearle el trade; se marcan con `*` en la salida para que no pasen de contrabando.
+  - **`--max-tokens=400` es un número elegido, no medido.** Es la mitad del budget default, así que
+    dos memorias de ese tamaño entran en una respuesta. No se validó contra calidad de recall real.
+  - **La distinción "sembrar lo aprendido / dejar las reglas en AGENTS.md" es SOLO documentación.**
+    El comando no la valida ni podría: no hay forma de que un parser sepa si una frase es una regla
+    o un hallazgo. Un usuario puede volcar sus convenciones igual.
+  - **La memoria del preámbulo es de valor dudoso.** El párrafo bajo `# Decisiones` entra como
+    memoria titulada "Decisiones". Es contenido que el usuario escribió, así que guardarlo es mejor
+    que tirarlo — pero es ruido, y el dry-run lo muestra para que se pueda borrar.
+  - **Un archivo por corrida.** Sin globs ni directorios. Un segundo posicional se rechaza con
+    exit 2, consistente con `rm` e `import`.
+  - **No hay eval automatizado de "lo sembrado se recupera".** Las tres consultas parafraseadas se
+    corrieron A MANO contra el binario. El lugar correcto sería un caso en `eval_test.go`; no está.
+  - Probado solo sobre un documento de demo de 6 secciones. **Sin correr contra un corpus grande**
+    ni contra los docs reales del repo.
+  - Solo windows/amd64. Sin commitear.
+
+## RECEIPT · Documentación del repo alineada + PR #9
+- **when**: 2026-08-13T00:00Z
+- **intent**: `## Status` del README describía un esqueleto con "10/10 tests green" y listaba como
+  próximo el set de evaluación, que está en el repo hace una semana. `docs/cli.md` indexaba 9
+  comandos y el binario tiene 10.
+- **changed** (commit `5505114`):
+  - `README.md` (+43/-7) — Status reescrito con números medidos y el orden de trabajo que argumenta
+    la auditoría (scope global → packing → enchufar el scorer). La línea de compatibilidad ahora
+    distingue **Codex verificado en CI** del resto, que se espera sobre el mismo protocolo y no
+    tiene test. Esa frase sin respaldo fue lo que originó este milestone entero.
+  - `docs/cli.md` (+25) — `seed` en el índice de comandos + 3 recetas (bootstrap día cero, loop
+    sobre ADRs con `--split=1`, re-seed tras editar).
+  - `docs/codex-memory-audit.md` (+1) — fila M1a por `vestigio seed`.
+- **ran**:
+  - `go build ./...` → **exit 0**
+  - `go vet ./...` → **exit 0**
+  - `go test ./...` → **6/6 paquetes ok**
+  - verificación de links: script Python sobre 6 archivos → **0 links relativos muertos**,
+    ancla `#vestigio-seed` presente en `docs/cli.md:117`
+  - `8835/1077` recalculado → **8.2x**, que es lo que afirma el README
+  - `git push upstream add-codex-support` → ok. **`git push origin` había sido RECHAZADO**: ver gaps.
+  - `gh pr create` → **PR #9**, y `gh pr view 9` → **8/8 checks SUCCESS**, `MERGEABLE / CLEAN`
+- **cost**: opus · ~12 tool calls
+- **gaps**:
+  - **Los tres comandos de evidencia no prueban nada sobre este cambio.** No se tocó una línea de
+    Go; corren verdes porque el árbol ya estaba verde. Se corrieron igual porque el recibo de
+    `docs/cli.md` de la sesión anterior anotó como gap justamente no haberlos corrido.
+  - **Ningún ejemplo del README ni de `docs/cli.md` se ejecutó en este turno.** Las recetas de
+    `seed` se escribieron a partir del comportamiento verificado en el recibo anterior; el loop
+    `for f in adr/*.md` **nunca se corrió** — no hay directorio de ADRs contra el cual probarlo.
+  - **Los links relativos están verificados; las anclas dentro de archivos, no.** Solo se chequeó
+    `#vestigio-seed`. El resto del índice de `docs/cli.md` se asume correcto.
+  - **TRAMPA DE LAS DOS CUENTAS, pagada de nuevo**: `git push origin` → `remote rejected —
+    permission denied`. `origin` es `victorramirezbvc/vestigio`, un **fork con permiso READ**;
+    el repo real es `upstream` = `valzkat1/vestigio`, donde la cuenta autenticada (`valzkat1`)
+    tiene ADMIN. Señal para detectarlo sin probar el push: `go.mod` y los badges dicen `valzkat1`
+    y los 9 PRs viven ahí. Se buscó en memoria ANTES de investigar y no estaba en el scope de este
+    proyecto — por eso se pagó otra vez. Guardado ahora como memoria #241.
+  - **La configuración de remotos quedó como estaba.** Renombrarlos es decisión del usuario, pero
+    mientras `origin` sea el fork, cada `git push` sin argumentos va a rebotar.
+  - PR #9 **abierto, no mergeado**. Verde en CI no es lo mismo que leído.

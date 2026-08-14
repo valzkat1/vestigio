@@ -6,7 +6,10 @@
 
 > Local memory for AI coding agents. A trace of what happened — not a retelling.
 
-Works with anything that speaks MCP: Claude Code, Cursor, Windsurf, Cline, Zed, Codex CLI.
+Speaks plain MCP over stdio, so it works with Claude Code, Cursor, Windsurf, Cline, Zed and Codex
+CLI. **Codex CLI compatibility is verified in CI** — a harness replays the exact frame sequence a
+Codex client sends. The others are expected to work on the same protocol and are not covered by a
+test, which is the honest version of that sentence.
 
 ## Why another memory server
 
@@ -52,7 +55,16 @@ Claude Code (`.mcp.json`):
 { "mcpServers": { "vestigio": { "command": "vestigio", "args": ["mcp"] } } }
 ```
 
-Every other MCP client takes the same `command` + `args` shape.
+Codex CLI (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.vestigio]
+command = "vestigio"
+args = ["mcp"]
+```
+
+Every other MCP client takes the same `command` + `args` shape. Codex setup, project
+detection and troubleshooting in full: **[docs/codex.md](docs/codex.md)**.
 
 | Variable | Meaning |
 |---|---|
@@ -72,8 +84,27 @@ vestigio show <id>              Print one memory in full
 vestigio edit <id> [--fix]      Rewrite a memory, recomputing hash and tokens
 vestigio rm <id> [--yes]        Delete a memory
 vestigio verify                 Report rows whose derived columns drifted
+vestigio seed <file.md|.txt>    Turn a document you wrote into memories
 vestigio import <export.json>   Migrate an Engram export
 ```
+
+### Starting from an empty store
+
+`vestigio seed` reads a document and cuts it into memories — markdown on headings, plain text on
+`---` rules — so the knowledge already sitting in your files does not have to be retyped one
+`remember` at a time.
+
+```bash
+vestigio seed docs/decisions.md --dry-run   # always look at the cut first
+vestigio seed docs/decisions.md
+```
+
+Cutting is the whole job. A README pasted in whole is one memory that no sensible `budget_tokens`
+can ever return, so `seed` splits oversized sections, marks the ones it could not split, and shows
+you the plan before writing anything. Re-running merges instead of duplicating.
+
+Seed what was **learned** — decision records, gotchas, post-mortems. Rules that were true before any
+code was written ("use strict mode") belong in `AGENTS.md`, which the agent already reads for free.
 
 **Never edit the database with a GUI browser or raw SQL.** Triggers keep the FTS index in sync, but `hash` and `tokens` are computed on write and no trigger touches them — a stale hash silently stops `remember` from deduplicating, so it inserts near-copies instead of updating. SQLite has no native `sha256()`, which makes maintaining the hash from SQL impossible; that is why `edit` exists. `verify` finds rows where it already happened, `edit --fix` repairs them.
 
@@ -91,14 +122,47 @@ Whether vectors are needed is a question for the M2 evaluation set, not for tast
 
 ## Status
 
-M1 — skeleton, verified against the built binary. Working MCP server, storage, BM25 recall, exact-content dedupe. 10/10 tests green; `tools/list` measured at 1,077 bytes on the wire, 8.2x smaller than Engram's `agent` profile.
+Working and verified against the built binary: MCP server, storage, BM25 recall, exact-content
+dedupe, a budget ceiling that is enforced rather than suggested, and a ten-command CLI.
 
-Two things landed ahead of their milestone, both because a real corpus needed them:
+Measured, not estimated:
 
-- **Engram import** (`vestigio import`) — 179 memories migrated, with project-name consolidation and type collapsing. Self-retrieval baseline on those 179: 100% found by title, 84% ranked first when the query is degraded.
-- **Inspect and repair commands** (`projects`, `list`, `show`, `edit`, `rm`, `verify`) — a store you cannot look inside is a store you cannot trust, and there is no reason to make an agent pay for the ability to look.
+| | |
+|---|---|
+| `tools/list` on the wire | **1,077 bytes** (~269 tokens) — 8.2x smaller than Engram's `agent` profile |
+| Tools exposed | 3, enforced by `TestToolCountIsThree` |
+| Test runs | 184, across six packages on Linux, macOS and Windows |
+| recall@1 / recall@3 | **10/15 · 12/15** on the paraphrase evaluation set, held by a ratchet |
 
-Next: M2 real budget packing + recall evaluation set · M3 near-duplicate merge via simhash · M4 decay-based eviction · M5 multi-platform releases.
+Landed since the skeleton:
+
+- **Codex CLI compatibility, proved rather than promised** — a harness drives the real server loop
+  with the frame sequence a Codex client sends. The README had claimed this support since the first
+  commit and nothing had ever exercised it. See [docs/codex.md](docs/codex.md) and the
+  [audit](docs/codex-memory-audit.md).
+- **Seeding** (`vestigio seed`) — turn documents you already wrote into memories, cut on headings or
+  `---` rules, so an empty store is not a retyping exercise.
+- **Engram import** (`vestigio import`) — 179 memories migrated, with project-name consolidation.
+- **Inspect and repair** (`projects`, `list`, `show`, `edit`, `rm`, `verify`) — a store you cannot
+  look inside is a store you cannot trust, and no agent should pay context for the ability to look.
+- **A paraphrase evaluation set** — the numbers above, as a build-breaking floor. It catches what
+  coverage cannot: flipping recall's `OR` to `AND` drops retrieval from 67% to 13% while every
+  other test in the repo stays green.
+
+Known and next, in the order the [audit](docs/codex-memory-audit.md) argues for:
+
+1. **A `global` scope.** Today every query is filtered to one project with no fallback, so
+   user-level knowledge has nowhere to live. This is the one capability that blocked a real
+   migration.
+2. **Real budget packing.** The ceiling is honoured; truncating bodies and trading one long
+   low-ranked memory for two short better ones is not implemented.
+3. **Wiring the scorer in.** `internal/retrieve` holds a `Scorer` interface and Reciprocal Rank
+   Fusion — and has zero call sites. Ranking today is `ORDER BY bm25()`, done by SQLite. That
+   scaffolding has to be connected before it can be extended.
+4. Near-duplicate merge via simhash · decay-based eviction · `stats` and `recall-debug` · releases.
+
+Vectors stay out until the evaluation set shows FTS5 is the limit. Two of its three current misses
+are lexical, not semantic, so synonym expansion is the cheaper thing to try first.
 
 ## Contributing
 

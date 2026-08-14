@@ -24,6 +24,8 @@ func main() {
 		os.Exit(runMCP(args[1:]))
 	case "import":
 		os.Exit(runImport(args[1:]))
+	case "seed":
+		os.Exit(runSeed(args[1:]))
 	case "projects":
 		os.Exit(runProjects(args[1:]))
 	case "list", "ls":
@@ -216,6 +218,22 @@ Inspect and edit:
        --fix                        recompute derived columns, keep content
   vestigio rm <id> [--yes]        Delete a memory
   vestigio verify                 Report rows whose hash or tokens drifted
+
+Seed a new store from documents you already wrote:
+  vestigio seed <file.md|file.txt> [flags]
+       --project=NAME               default: detected project
+       --kind=KIND                  fallback kind; the cascade wins over it
+       --split=N                    cut markdown at heading level N (default: auto)
+       --max-tokens=N               split sections larger than this (default 400)
+       --dry-run                    print the plan, write nothing
+
+       Markdown is cut on headings, plain text on "---" rules. Each section
+       becomes one memory. Run --dry-run first: the cut is a guess about YOUR
+       document, and it is cheaper to look than to clean up afterwards.
+
+       Seed what was LEARNED — decision records, gotchas, post-mortems. Rules
+       that were true before any code was written ("use strict mode") belong in
+       AGENTS.md, which the agent already reads for free.
 
   Import an Engram export:
   vestigio import <export.json> [--dry-run] [--map=old=new,...] [--skip=type,...]
