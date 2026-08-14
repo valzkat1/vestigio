@@ -232,6 +232,10 @@ vestigio import <export.json> [--dry-run] [--map=old=new,...] [--skip=type,...]
 Migrates an Engram JSON export into the store. Import is a CLI command rather than an MCP tool for
 the usual reason: an agent never needs to call it, so it should never be in an agent's context.
 
+This command is the *data* half of a migration. The instruction layer — prompts and rules telling an
+agent to call tools that no longer exist — is the half that breaks quietly, and it is bigger. See
+[migrating-from-engram.md](migrating-from-engram.md).
+
 | Flag | Effect |
 |---|---|
 | `--dry-run` | Report what would happen, write nothing. Prints `DRY RUN — no se escribe nada` first. |
