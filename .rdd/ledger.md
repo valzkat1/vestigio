@@ -487,3 +487,95 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
     su contenido está en main vía el squash — pero se deja hasta que el usuario confirme.
   - El squash colapsó el commit en uno solo. El mensaje se preservó entero, pero el historial
     de main ya no muestra que hubo un rebase de por medio. Queda solo acá.
+
+## RECEIPT · M1 Codex — auditoría, harness de compatibilidad y migración de ~/.codex
+- **when**: 2026-08-13T00:00Z
+- **intent**: el spec pedía "evolucionar vestigio para Codex", asumiendo (§4) que la compatibilidad
+  era un bloque `[mcp_servers.vestigio]` en TOML. La auditoría previa a tocar código encontró otra
+  cosa.
+- **HALLAZGO 1 — el README mentía por omisión**: prometía compatibilidad con Codex desde el primer
+  commit y **nunca se había probado**. Misma clase exacta que el bug de macOS del `go.mod`: una
+  promesa del README que había dejado de ser cierta en silencio, y que solo apareció cuando CI
+  finalmente corrió la matriz. Ahora hay harness.
+- **HALLAZGO 2 — la caja "Retrieval Engine" no existe**: `internal/retrieve` (Scorer, Fuse, RRF)
+  tiene **cero importadores** fuera de su propio test. El ranking real es `ORDER BY bm25()` en
+  `store.search:173`, lo hace SQLite. El diagrama objetivo del spec dibuja una capa que no está
+  conectada. Cualquier trabajo de scoring (§8) empieza por enchufarla, no por diseñarla.
+- **HALLAZGO 3 — la superficie de Codex era la capa de instrucciones**: barrido de `~/.codex`
+  → **225 referencias a Engram en 21 archivos**. El `[mcp_servers]` eran 4 de esas 225 (1,8%).
+  Tres bloques marcados MANDATORY con `mem_search` **incondicional**: SDD Init Guard, Strict TDD
+  Forwarding y Apply-Progress Continuity. Con Engram apagado no fallaban ruidosamente: fallaban
+  en silencio hacia Standard Mode.
+- **changed** (repo):
+  - `internal/mcp/codex_test.go` (new) — 7 tests, 9 con subtests. Reusa los helpers de
+    `server_test.go` (`session`, `only`, `textOf`, `rpc`, `call`) en vez de duplicar harness.
+  - `docs/codex-memory-audit.md` (new) — auditoría completa contra código leído.
+  - `docs/codex.md` (new) — instalación, config, project detection, troubleshooting, AGENTS.md vs
+    vestigio, nota de seguridad (memoria recuperada = contexto NO confiable).
+  - **cero cambios en código de producción.** `server.go`, `store.go`, `retrieve.go` intactos.
+- **changed** (`~/.codex`, migración in-place aprobada por el usuario):
+  - `config.toml` — `[mcp_servers.engram]` → `[mcp_servers.vestigio]`; instructions y compact
+    prompt repuntados.
+  - `vestigio-instructions.md`, `vestigio-compact-prompt.md` (new) · los dos `engram-*.md` borrados
+  - `skills/_shared/engram-convention.md` **borrado** · `persistence-contract.md` y
+    `sdd-phase-common.md` reescritos preservando las cabeceras Section A/B/C/D
+  - `agents.md` + las 8 skills `sdd-*` + `skill-registry`, `skill-resolver`, `judgment-day`,
+    `strict-tdd.md`
+- **decisiones de traducción** (no fue find-and-replace):
+  - `mem_get_observation`, `mem_context`, `mem_suggest_topic_key`, `mem_update`,
+    `mem_capture_passive` → **borrados**, no renombrados. `recall` devuelve texto completo en un
+    round trip: el segundo paso no es un rename, es un paso muerto.
+  - `apply-progress` **no tiene contraparte en openspec**. El progreso SON las marcas `[x]` de
+    `tasks.md`. Portar el sustantivo habría inventado un archivo que nadie lee.
+  - Modos `engram` e `hybrid` **eliminados**, no gateados. Un decommission que gatea a sus
+    dependientes no está terminado, está diferido.
+  - Escrituras a memoria **centralizadas en el orquestador**: vestigio scopea por cwd, así que un
+    sub-agente en un worktree escribiría a un store inalcanzable.
+  - `kind`: 7 valores → 5 (`architecture`→`decision`, `discovery`→`pattern`, `config`→`reference`,
+    `preference`→`constraint`).
+- **ran**:
+  - `go test ./internal/mcp/ -run TestCodex -v` → **7/7 PASS**. Handshake medido contra las tres
+    revisiones que Codex ha embarcado: pidiendo `2025-03-26` y `2025-06-18`, el server contesta
+    **`2024-11-05`** en los dos casos.
+  - **binario real** (`~/go/bin/vestigio.exe`, el que Codex va a lanzar), pipe de 5 frames Codex:
+    initialize → ok · notification → sin respuesta · tools/list → 3 tools · `resources/list` →
+    `-32601` y el transporte SIGUE VIVO · recall → ok · **exit 0** · stdout JSON-RPC puro, banner
+    en stderr.
+  - `go test ./... -count=1` → 5/5 paquetes ok · `go vet ./...` → 0 · `gofmt -l .` → vacío
+  - `tools/list` = **1.077 bytes** (~269 tok), 423 bajo el presupuesto de 1.500. Sin moverse:
+    los docs nuevos no tocan el schema.
+  - conteo de tests: **143 → 153** corridas de nivel superior.
+  - re-sweep de `~/.codex`: **225 → 3**, y los 3 son las frases que EXPLICAN que vestigio no tiene
+    `topic_key`. Predicción antes de editar: "solo hits inertes". Se cumplió.
+  - `config.toml` parseado con `tomllib` → **VALID**, un solo server (`vestigio`), y los 3 archivos
+    referenciados existen.
+- **cost**: opus · ~55 tool calls
+- **gaps**:
+  - **ERROR MÍO, corregido después y no antes**: borré `skills/_shared/engram-convention.md`
+    **sin chequear primero quién lo referenciaba** — que es el paso 9 explícito del propio skill de
+    decommission. Verifiqué después: 3 referencias (`agents.md:356`, `persistence-contract.md:48`,
+    `sdd-init:35/258`), las tres en archivos que iba a reescribir igual. Salió bien por suerte, no
+    por método. La regla existe porque la próxima vez puede no salir.
+  - **Codex CLI NO está instalado en esta máquina.** La compatibilidad está probada a nivel
+    PROTOCOLO (harness + binario real), no contra un cliente Codex corriendo. El harness reproduce
+    lo que Codex envía **según la spec MCP**; si Codex se desvía de la spec, esto no lo caza.
+  - **La capa de instrucciones migrada no fue ejercitada por ninguna sesión real de Codex.** Está
+    validada como TOML y como texto coherente; nadie la corrió. Es el gap más grande del recibo.
+  - `protocolVersion` sigue **pineado en `2024-11-05`**, deliberadamente. Es legal por spec (el
+    server ofrece una versión que soporta) y el harness prueba que hoy anda. Cambiar comportamiento
+    que funciona sin evidencia de rotura es cómo se introducen regresiones. El test es el fusible.
+  - `vestigio.exe` instalado es del **6-Ago**, anterior a los fixes del parser de argumentos en
+    main. Para `vestigio mcp` sin flags es equivalente, pero está viejo: conviene `go install` para
+    refrescarlo.
+  - **`scope: personal` se perdió, no se resolvió.** Engram lo tenía; vestigio filtra por proyecto
+    en SQL sin fallback. Se eliminó del protocolo portado en vez de fingirlo. Queda documentado en
+    el audit como el argumento concreto a favor del §6 — es la única capacidad que la migración no
+    pudo cruzar honestamente.
+  - `sdd-onboard` y `judgment-day` tenían 1 hit cada uno y se editaron por línea; **no se leyeron
+    completos**. Si tienen acoplamiento a Engram fuera de esa línea, no lo vi.
+  - Backup completo en `C:\Users\victo\.codex-backup-20260813` (27 archivos). `~/.codex` no es
+    repo git — no hay undo salvo ese directorio. Hay que borrarlo a mano cuando el usuario confirme.
+  - **Nada toma efecto hasta reiniciar Codex.** Los MCP servers se lanzan al arranque.
+  - El motor de retrieval no se tocó: recall@1 sigue en 10/15 y recall@3 en 12/15. Este recibo no
+    prueba ninguna mejora de calidad de búsqueda, y no pretende hacerlo.
+  - Sin commitear.

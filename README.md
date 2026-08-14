@@ -52,7 +52,16 @@ Claude Code (`.mcp.json`):
 { "mcpServers": { "vestigio": { "command": "vestigio", "args": ["mcp"] } } }
 ```
 
-Every other MCP client takes the same `command` + `args` shape.
+Codex CLI (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.vestigio]
+command = "vestigio"
+args = ["mcp"]
+```
+
+Every other MCP client takes the same `command` + `args` shape. Codex setup, project
+detection and troubleshooting in full: **[docs/codex.md](docs/codex.md)**.
 
 | Variable | Meaning |
 |---|---|
