@@ -337,6 +337,7 @@ justified by evidence yet.
 | Milestone | Scope | Complexity | Risk |
 |---|---|---|---|
 | **M1** (this) | Audit, Codex harness, `docs/codex.md`, instruction-layer migration | Low | None to the engine — no production code changed |
+| **M1a** | `vestigio seed`: bootstrap a store from documents the user already wrote | Low | CLI-only, zero MCP surface; two content-loss bugs found by running it |
 | **M2** | `global` scope + project-aware ranking. Schema add, fallback in `search`, ranking weight | **Medium** | First schema change; needs migration test and eval re-baseline |
 | **M3** | Real budget packing: truncation with a floor, swap long low-rank for short high-rank | **Medium** | Contract already promises the ceiling, so callers see no break |
 | **M4** | Wire `internal/retrieve` into `search`; register BM25 as the first `Scorer`; add freshness/kind weights | **Medium-high** | Touches the ranking that eval measures — the ratchet is the safety net |

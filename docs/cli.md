@@ -14,6 +14,7 @@ vestigio <command> [arguments] [flags]
 | Command | What it does |
 |---|---|
 | [`mcp`](#vestigio-mcp) | Start the MCP server over stdio |
+| [`seed`](#vestigio-seed) | Turn a document you already wrote into memories |
 | [`import`](#vestigio-import) | Migrate an Engram JSON export |
 | [`projects`](#vestigio-projects) | Inventory of memories and tokens per project |
 | [`list`](#vestigio-list) (`ls`) | List memories, newest first |
@@ -487,6 +488,30 @@ vestigio edit <id> --fix        # repair each one, content untouched
 ---
 
 ## Recipes
+
+**Start a store from what you already wrote**
+
+```bash
+vestigio seed docs/decisions.md --dry-run     # look at the cut before it happens
+vestigio seed docs/decisions.md
+vestigio seed NOTES.txt --kind=constraint
+vestigio list --limit=50                      # check what landed
+```
+
+**Seed a directory of ADRs, one record per file**
+
+```bash
+for f in adr/*.md; do vestigio seed "$f" --split=1; done
+```
+
+`--split=1` because a file holding a single record would otherwise be cut into its `## Context` and
+`## Decision` parts. `seed` takes one file at a time on purpose, so the loop is explicit.
+
+**Re-seed after editing one section**
+
+```bash
+vestigio seed docs/decisions.md    # unchanged sections merge, the edited one updates
+```
 
 **Audit what memory is costing you**
 
