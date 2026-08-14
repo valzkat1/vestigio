@@ -102,7 +102,7 @@ Starts the MCP server, speaking JSON-RPC over stdin/stdout. Protocol version `20
 
 `--project=NAME` pins the project, bypassing detection. Equivalent to `VESTIGIO_PROJECT`.
 
-**stdout is reserved for JSON-RPC frames.** The startup banner — `vestigio 0.1.0 — project "alcubo"`
+**stdout is reserved for JSON-RPC frames.** The startup banner — `vestigio dev — project "alcubo"`
 — goes to stderr on purpose. Anything printed to stdout would corrupt the stream and the client
 would drop the connection.
 
@@ -448,6 +448,10 @@ vestigio -v
 ```
 
 Prints `vestigio <version>`. The same string goes out in the MCP `initialize` handshake.
+
+A binary built from source — `go build`, `go install`, or a working tree — reports `dev`. Only a
+release binary carries a version number, injected from the git tag by the linker. That distinction
+is deliberate: a bug report saying `dev` cannot be mistaken for one about a published release.
 
 ## `vestigio help`
 

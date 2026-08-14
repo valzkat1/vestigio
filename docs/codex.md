@@ -78,7 +78,7 @@ Two defences, both worth using:
 **Look at stderr on startup.** The resolved project is printed there on purpose:
 
 ```
-vestigio 0.1.0 — project "vestigio"
+vestigio dev — project "vestigio"
 ```
 
 **Pin it when you care.** For a repository you work in constantly, set it
