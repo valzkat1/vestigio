@@ -113,6 +113,115 @@ Client configuration, for Claude Code (`.mcp.json`) and identical in shape every
 
 ---
 
+## `vestigio seed`
+
+```
+vestigio seed <file.md|file.txt> [--project=NAME] [--kind=KIND] [--split=N] [--max-tokens=N] [--dry-run]
+```
+
+Turns a document you already wrote into memories. Use it on day zero, when the store is empty and
+the knowledge is sitting in files.
+
+**Reading the file is the easy part. Cutting it is the whole job.** A memory that needs more than a
+few hundred tokens to state is two memories, and a README pasted in whole is one row that no
+sensible `budget_tokens` can ever return. So `seed` splits, and then tells you where it cut.
+
+### What to seed, and what not to
+
+| Seed it | Leave it in `AGENTS.md` |
+|---|---|
+| Decision records, ADRs | "Use TypeScript strict mode" |
+| Gotcha lists, post-mortems | "Do not use `any`" |
+| "Watch out for X" onboarding notes | "Tests run with Jest" |
+| Migration order, legacy quirks | Anything true before a line of code was written |
+
+The line is not about format, it is about origin: **seed what was LEARNED.** Rules you decided in
+advance are already in the agent's context for free — copying them into memory buys a `recall` call
+to be told something the agent was told anyway.
+
+### How it cuts
+
+**Markdown** cuts on headings. Each section becomes one memory: the heading is the title, everything
+under it until the next heading of the same level is the body. Deeper headings stay inside the body.
+
+The level is auto-detected as **the shallowest heading level that repeats and is not a layer of
+category labels**. A level whose headings all name kinds — `# Decisions`, `# Constraints` — exists to
+classify its children, so it is skipped rather than cut on.
+
+Auto-detection is a guess about *your* document. **Run `--dry-run` first.** The one case it reliably
+gets wrong is a file holding a single record (`# ADR-001` with `## Context` and `## Decision` under
+it): nothing in the text distinguishes that from a list of two facts, and it will cut at H2. Pass
+`--split=1`.
+
+**Plain text** cuts on `---` rules. The first line of each block is the title, the rest is the body;
+a one-line block is its own title, because a single sentence is a perfectly good fact.
+
+A `#` inside a fenced code block is a shell comment, not a heading.
+
+### How `kind` is chosen
+
+First match wins:
+
+1. An explicit marker in the heading — `## [bugfix] The binary died on macOS`
+2. The nearest ancestor heading that names a kind — everything under `# Decisions` becomes `decision`
+3. `--kind=KIND` on the command line
+4. `reference`
+
+Both English and Spanish headings are recognised, plurals included.
+
+| Flag | Effect |
+|---|---|
+| `--project=NAME` | Where to write. Default: the detected project. |
+| `--kind=KIND` | Fallback kind. The cascade above still wins over it. |
+| `--split=N` | Cut markdown at heading level N (1-6). Default: auto-detect. |
+| `--max-tokens=N` | Split sections larger than this. Default 400 — half a default recall budget, so two still fit one answer. |
+| `--dry-run` | Print the plan, write nothing. |
+
+### Reading the output
+
+```
+$ vestigio seed decisiones.md --project=demo --dry-run
+decisiones.md → project "demo", cut at H2
+
+DRY RUN — nothing is written
+
+   KIND        TOKENS  TITLE
+   decision    32      Elegimos Go para el binario
+   decision    39      SQLite con FTS5 para el almacenamiento
+   bugfix      37      El binario moría en macOS
+   constraint  37      No editar la base con un browser de SQL
+
+4 memories · 145 tokens
+```
+
+Two marks in the first column, and both mean "look at this":
+
+| Mark | Meaning |
+|---|---|
+| `*` | Came from auto-splitting an oversized section. **The title was generated, not written by you** — it reads `Parent — Child`. |
+| `!` | Over `--max-tokens` and had no sub-headings to split on. Stored anyway, because dropping your content is worse — but a memory that large will crowd out everything else in a recall. |
+
+Headings with no content under them are skipped and counted: a title alone is not a fact.
+
+### Re-running is safe
+
+Seeding the same document twice **merges instead of duplicating** — exact content is deduplicated by
+hash, so an unchanged section updates its existing row. Edit one section of a long file and re-seed;
+only that one changes.
+
+```bash
+vestigio seed docs/decisions.md --dry-run        # always look first
+vestigio seed docs/decisions.md
+vestigio seed NOTES.txt --kind=constraint
+vestigio seed adr/0001-use-go.md --split=1       # one record per file
+```
+
+Takes one file at a time. A second positional is rejected with exit `2` rather than silently ignored.
+Exits `2` on any malformed flag, before the file is opened or the store touched; `1` if the file
+cannot be read.
+
+---
+
 ## `vestigio import`
 
 ```

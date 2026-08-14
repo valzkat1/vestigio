@@ -81,8 +81,27 @@ vestigio show <id>              Print one memory in full
 vestigio edit <id> [--fix]      Rewrite a memory, recomputing hash and tokens
 vestigio rm <id> [--yes]        Delete a memory
 vestigio verify                 Report rows whose derived columns drifted
+vestigio seed <file.md|.txt>    Turn a document you wrote into memories
 vestigio import <export.json>   Migrate an Engram export
 ```
+
+### Starting from an empty store
+
+`vestigio seed` reads a document and cuts it into memories — markdown on headings, plain text on
+`---` rules — so the knowledge already sitting in your files does not have to be retyped one
+`remember` at a time.
+
+```bash
+vestigio seed docs/decisions.md --dry-run   # always look at the cut first
+vestigio seed docs/decisions.md
+```
+
+Cutting is the whole job. A README pasted in whole is one memory that no sensible `budget_tokens`
+can ever return, so `seed` splits oversized sections, marks the ones it could not split, and shows
+you the plan before writing anything. Re-running merges instead of duplicating.
+
+Seed what was **learned** — decision records, gotchas, post-mortems. Rules that were true before any
+code was written ("use strict mode") belong in `AGENTS.md`, which the agent already reads for free.
 
 **Never edit the database with a GUI browser or raw SQL.** Triggers keep the FTS index in sync, but `hash` and `tokens` are computed on write and no trigger touches them — a stale hash silently stops `remember` from deduplicating, so it inserts near-copies instead of updating. SQLite has no native `sha256()`, which makes maintaining the hash from SQL impossible; that is why `edit` exists. `verify` finds rows where it already happened, `edit --fix` repairs them.
 

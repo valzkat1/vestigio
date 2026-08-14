@@ -579,3 +579,79 @@ Append-only. Newest at the bottom. See the RDD receipt schema for the contract.
   - El motor de retrieval no se tocó: recall@1 sigue en 10/15 y recall@3 en 12/15. Este recibo no
     prueba ninguna mejora de calidad de búsqueda, y no pretende hacerlo.
   - Sin commitear.
+
+## RECEIPT · `vestigio seed` — sembrar la memoria desde documentos propios
+- **when**: 2026-08-13T00:00Z
+- **intent**: dar al usuario una forma de arrancar con memoria: aportar sus especificaciones
+  iniciales en `.md` o `.txt` y que se conviertan en memorias.
+- **el problema real no era leer archivos, era CORTAR**: una memoria que necesita más de unos
+  cientos de tokens son dos memorias (`store.go:16`). Un README pegado entero es una fila que
+  ningún `budget_tokens` sensato puede devolver — el import de Engram ya dejó 13 memorias que
+  solas revientan un budget de 800. Todo el diseño es el corte.
+- **decisión de superficie**: comando CLI, **cero tools MCP nuevas**. Un agente podría leer un `.md`
+  y emitir `remember` N veces, y es estrictamente peor: paga miles de tokens leyendo, no es
+  idempotente, y ocurre después de que la sesión ya arrancó. Sembrar es una operación de día cero.
+  `tools/list` quedó en **1.077 bytes, sin moverse un byte**.
+- **changed**:
+  - `internal/seed/seed.go` (new) — parser puro: sin store, sin filesystem, sin red. Árbol de
+    secciones, cascada de kind, auto-split de secciones grandes.
+  - `internal/seed/seed_test.go` (new) — 18 tests
+  - `cmd/vestigio/seed.go` (new) — comando con `--project/--kind/--split/--max-tokens/--dry-run`,
+    sobre el `argSpec` compartido que ya rechaza lo que no reconoce
+  - `cmd/vestigio/seed_test.go` (new) — 8 tests + 10 casos de rechazo de flags
+  - `cmd/vestigio/main.go` — registro del subcomando + `usage()`
+  - `docs/cli.md`, `README.md` — sección `seed`, con la tabla "qué sembrar / qué dejar en AGENTS.md"
+- **DOS BUGS ENCONTRADOS, los dos por CORRER EL BINARIO, no por leer el código**:
+  1. **Pérdida silenciosa de contenido.** `collect` recursaba a través de los nodos por encima del
+     nivel de corte y nunca miraba su prosa: un párrafo bajo `# Decisiones` **desaparecía sin
+     aviso**. Es exactamente la falla contra la que está construido este proyecto. Apareció de
+     rebote — el test de auto-split se auto-detectó a un nivel más profundo del que yo quería y el
+     lead faltante saltó en el diff de títulos. Fix: `emitLead`. Tests de regresión:
+     `TestProseAboveTheCutIsNotDropped` y `TestPreambleBeforeAnyHeadingIsKept`.
+  2. **El heurístico cortaba en la capa de etiquetas.** Un doc organizado como `# Decisiones` /
+     `# Restricciones`, con varios `##` colgando de cada uno, repite en nivel 1 → la regla ingenua
+     ("nivel más shallow que se repite") cortaba ahí y producía **2 memorias enormes con nombre de
+     categoría en vez de 5 hechos**. Un encabezado que ES un nombre de kind existe para CLASIFICAR
+     a sus hijos — que es justo para lo que lo lee la cascada. Fix: saltear niveles donde TODOS los
+     encabezados nombran un kind.
+     - Sub-bug del mismo: `# Restricciones` no matcheaba. Los plurales españoles de `-ión` pierden
+       la tilde (`restricción` → `restricciones`), y la tabla estaba cabeceada con la forma
+       acentuada. Fix: normalizar acentos y cabecear la tabla sin tilde.
+- **ran**:
+  - `go test ./... -cover -count=1` → **6/6 paquetes ok**. `internal/seed` **90.7%**,
+    `cmd/vestigio` **64.8% → 70.2%**
+  - conteo de tests: **153 → 184** corridas de nivel superior
+  - `go vet ./...` → 0 · `gofmt -l .` → vacío · `go mod tidy` → sin drift
+  - **`tools/list` = 1.077 bytes**, idéntico. El comando no le cuesta contexto a ningún agente.
+  - trinquete de recall intacto: **recall@1 10/15 · recall@3 12/15**
+  - **binario compilado, documento real de 6 secciones** (bilingüe, con fence, con dos categorías):
+    dry-run → `cut at H2`, 6 memorias, kinds `decision/decision/decision/bugfix/constraint/constraint`
+    · real → 6 created · re-seed → **6 merged, 0 created** (idempotente)
+    · el `# esto NO es un encabezado` dentro del fence quedó como contenido, no como sección
+  - **seed → recall end-to-end por MCP**, con paráfrasis que no repiten el título:
+    "por que descartamos node" → #2 Elegimos Go **rank 1** ·
+    "puedo tocar la base con un GUI?" → #5 No editar la base **rank 1** ·
+    "el binario no arrancaba en mac" → el bugfix de macOS en rank 2
+- **cost**: opus · ~30 tool calls
+- **gaps**:
+  - **El caso de un registro por archivo sigue mal y es deliberado.** `# ADR-001` con `## Context` y
+    `## Decision` debajo corta en H2 y parte un ADR en pedazos. Nada en el texto lo distingue de una
+    lista de dos hechos. `--split=1` es la respuesta y `--dry-run` es cómo se ve antes. Documentado
+    en `docs/cli.md` y en el comentario de `detectLevel`, no resuelto.
+  - **El auto-split inventa títulos** (`Padre — Hijo`). Fue una decisión explícita del usuario tras
+    plantearle el trade; se marcan con `*` en la salida para que no pasen de contrabando.
+  - **`--max-tokens=400` es un número elegido, no medido.** Es la mitad del budget default, así que
+    dos memorias de ese tamaño entran en una respuesta. No se validó contra calidad de recall real.
+  - **La distinción "sembrar lo aprendido / dejar las reglas en AGENTS.md" es SOLO documentación.**
+    El comando no la valida ni podría: no hay forma de que un parser sepa si una frase es una regla
+    o un hallazgo. Un usuario puede volcar sus convenciones igual.
+  - **La memoria del preámbulo es de valor dudoso.** El párrafo bajo `# Decisiones` entra como
+    memoria titulada "Decisiones". Es contenido que el usuario escribió, así que guardarlo es mejor
+    que tirarlo — pero es ruido, y el dry-run lo muestra para que se pueda borrar.
+  - **Un archivo por corrida.** Sin globs ni directorios. Un segundo posicional se rechaza con
+    exit 2, consistente con `rm` e `import`.
+  - **No hay eval automatizado de "lo sembrado se recupera".** Las tres consultas parafraseadas se
+    corrieron A MANO contra el binario. El lugar correcto sería un caso en `eval_test.go`; no está.
+  - Probado solo sobre un documento de demo de 6 secciones. **Sin correr contra un corpus grande**
+    ni contra los docs reales del repo.
+  - Solo windows/amd64. Sin commitear.
