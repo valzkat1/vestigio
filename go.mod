@@ -8,7 +8,7 @@ module github.com/valzkat1/vestigio
 // cross-compiles anywhere, and that promise had quietly stopped being true.
 go 1.25.0
 
-require modernc.org/sqlite v1.56.0
+require modernc.org/sqlite v1.57.0
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
